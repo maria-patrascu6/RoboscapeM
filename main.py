@@ -148,16 +148,17 @@ def bomb_timeout(game):
 def circuit_solution():
     # Fiecare piesa are un tip si o rotatie de 0, 1, 2 sau 3 sferturi.
     # Rotatia necesara conecteaza sursa din stanga cu iesirea de jos.
-    solution = [
-        ("straight", 1), ("straight", 1),
-        ("straight", 1), ("elbow", 2),
-        ("elbow", 0), ("straight", 0),
-        ("elbow", 1), ("elbow", 3),
-        ("elbow", 0), ("elbow", 2),
-        ("straight", 0), ("straight", 0),
-        ("elbow", 1), ("elbow", 0),
-        ("elbow", 3), ("straight", 0)
-    ]
+solution = [
+    ("straight", 1), ("straight", 1),
+    ("straight", 1), ("elbow", 2),
+    ("elbow", 0), ("straight", 0),
+    ("elbow", 1), ("straight", 0),
+    ("elbow", 0), ("elbow", 2),
+    ("straight", 0), ("straight", 0),
+    ("elbow", 1), ("elbow", 0),
+    ("elbow", 3), ("straight", 0)
+]
+
     return solution
 
 
