@@ -1,3 +1,4 @@
+
 import random
 import time
 from collections import deque
@@ -13,34 +14,35 @@ MAZE_SIZE = 7
 GRID_SIZE = 5
 CIRCUIT_SIZE = 4
 
+# Peretii labirintului: [rand, coloana]
 MAZE_WALLS = [
-    [1, 2], [1, 3], [2, 3],
-    [3, 1], [3, 2], [4, 4],
-    [4, 5], [5, 2]
+    [0, 2], [0, 3], [0, 5],
+    [1, 1], [1, 3], [1, 5],
+    [2, 1], [2, 2], [2, 5],
+    [3, 3], [3, 4], [3, 5],
+    [4, 1], [4, 3],
+    [5, 1], [5, 5],
+    [6, 2], [6, 3], [6, 5]
 ]
 
+# Peretii grilei de securitate.
+# Am lasat libera coloana din dreapta jos pentru a permite
+# accesul la iesire, inclusiv la dificultatea medie si maxima.
 GRID_WALLS = [
     [0, 2],
     [1, 0], [1, 2], [1, 4],
-    [3, 1], [3, 2], [3, 4]
+    [3, 1], [3, 2]
 ]
 
 SYMBOLS = ["▲", "●", "■", "◆", "★"]
 
 COLORS = ["Albastru", "Galben", "Mov", "Verde", "Roșu"]
 
-# Indicii: 1 = usor, 2 = mediu, 3 = dificil
 DIFFICULTY_NAMES = {
     1: "usor",
     2: "mediu",
     3: "dificil"
 }
-
-# Traseul circuitului:
-# 0 -> 1 -> 2 -> 6 -> 10 -> 11 -> 15
-#
-# Sursa intra prin partea stanga a piesei 0.
-# Capsula este conectata la partea de jos a piesei 15.
 
 
 # =========================================================
@@ -111,27 +113,21 @@ def move_maze(game, direction):
 # GRILA DE SECURITATE
 # =========================================================
 
-def can_move_grid(row, col):
+def can_move_grid(row, col, game):
     if row < 0 or row >= GRID_SIZE:
         return False
 
     if col < 0 or col >= GRID_SIZE:
         return False
 
-    if [row, col] in GRID_WALLS:
-        return False
+    walls = [wall[:] for wall in GRID_WALLS]
 
-    # La dificultatea maxima apare un obstacol suplimentar.
-    if game_difficulty_placeholder():
-        pass
+    # La dificultatea medie sau maxima apare un obstacol
+    # suplimentar, fara sa blocheze complet drumul spre iesire.
+    if game["difficulty"] >= 2:
+        walls.append([3, 3])
 
-    return True
-
-
-def game_difficulty_placeholder():
-    # Functie neutra, pastrata pentru a evita dependente
-    # de variabile globale in verificarea miscarilor.
-    return False
+    return [row, col] not in walls
 
 
 def move_grid(game, direction):
@@ -152,16 +148,7 @@ def move_grid(game, direction):
     else:
         return
 
-    walls = [wall[:] for wall in GRID_WALLS]
-
-    if game["difficulty"] >= 2:
-        walls.append([3, 3])
-
-    if (
-        0 <= new_row < GRID_SIZE
-        and 0 <= new_col < GRID_SIZE
-        and [new_row, new_col] not in walls
-    ):
+    if can_move_grid(new_row, new_col, game):
         game["grid_pos"] = [new_row, new_col]
         game["feedback"] = ""
     else:
@@ -234,7 +221,9 @@ def update_bomb(game):
     ):
         game["bomb_phase"] = "input"
         game["bomb_deadline"] = now + 20
-        game["feedback"] = "Introdu simbolurile in ordinea memorata."
+        game["feedback"] = (
+            "Introdu simbolurile in ordinea memorata."
+        )
 
     elif (
         game["bomb_phase"] == "input"
@@ -245,7 +234,9 @@ def update_bomb(game):
         game["bomb_phase"] = "show"
         game["bomb_show_until"] = now + 3
         game["bomb_deadline"] = 0
-        game["feedback"] = "Timpul a expirat. Memoreaza din nou."
+        game["feedback"] = (
+            "Timpul a expirat. Memoreaza din nou."
+        )
 
 
 def pick_bomb_symbol(game, symbol):
@@ -271,7 +262,9 @@ def pick_bomb_symbol(game, symbol):
         game["bomb_phase"] = "show"
         game["bomb_show_until"] = time.time() + 3
         game["bomb_deadline"] = 0
-        game["feedback"] = "Simbol gresit! Incearca din nou."
+        game["feedback"] = (
+            "Simbol gresit! Incearca din nou."
+        )
         return
 
     game["bomb_input"].append(symbol)
@@ -289,7 +282,9 @@ def hide_bomb(game):
         if time.time() >= game["bomb_show_until"]:
             game["bomb_phase"] = "input"
             game["bomb_deadline"] = time.time() + 20
-            game["feedback"] = "Introdu simbolurile memorate."
+            game["feedback"] = (
+                "Introdu simbolurile memorate."
+            )
 
 
 # =========================================================
@@ -303,10 +298,12 @@ def setup_wires(game):
         count = 5
 
     game["colors"] = COLORS[:]
+
     game["wire_target"] = random.sample(
         list(range(len(COLORS))),
         count
     )
+
     game["wire_input"] = []
 
 
@@ -333,13 +330,17 @@ def pick_wire(game, color_index):
     if color_index != game["wire_target"][position]:
         game["mistakes"] += 1
         game["wire_input"] = []
-        game["feedback"] = "Ordine gresita! Incearca din nou."
+        game["feedback"] = (
+            "Ordine gresita! Incearca din nou."
+        )
         return
 
     game["wire_input"].append(color_index)
 
     if len(game["wire_input"]) == len(game["wire_target"]):
-        game["feedback"] = "Cablurile au fost conectate corect!"
+        game["feedback"] = (
+            "Cablurile au fost conectate corect!"
+        )
         advance_stage(game)
 
 
@@ -389,7 +390,9 @@ def submit_logic(game, answer):
         return
 
     if answer == game["logic_answer"]:
-        game["feedback"] = "Raspuns corect! Terminalul a fost deblocat."
+        game["feedback"] = (
+            "Raspuns corect! Terminalul a fost deblocat."
+        )
         advance_stage(game)
     else:
         game["mistakes"] += 1
@@ -427,13 +430,21 @@ def get_ports(tile):
 
 
 def create_circuit(game):
-    # Piesele corecte pentru traseul sursa-capsula.
+    # Traseul corect:
+    # 0 -> 1 -> 2 -> 6 -> 10 -> 11 -> 15
+    #
+    # Piesa 0: intrare din stanga, iesire spre dreapta.
+    # Piesa 2: intrare din stanga, iesire in jos.
+    # Piesa 10: intrare de sus, iesire spre stanga.
+    # Piesa 11: intrare din stanga, iesire in jos.
+    # Piesa 15: intrare de sus, iesire in jos.
+
     solution = {
         0: ("straight", 1),
         1: ("straight", 1),
-        2: ("elbow", 2),
+        2: ("elbow", 1),
         6: ("straight", 0),
-        10: ("elbow", 0),
+        10: ("elbow", 3),
         11: ("elbow", 2),
         15: ("straight", 0)
     }
@@ -444,10 +455,15 @@ def create_circuit(game):
         if index in solution:
             kind, correct_rotation = solution[index]
 
-            # Amesteca piesele de pe traseul corect.
-            rotation = (
-                correct_rotation + random.choice([1, 2, 3])
-            ) % 4
+            if kind == "straight":
+                # Schimba orientarea reala a piesei.
+                rotation = (correct_rotation + 1) % 4
+            else:
+                # Pentru coturi, toate celelalte rotatii
+                # reprezinta orientari diferite.
+                rotation = (
+                    correct_rotation + random.choice([1, 2, 3])
+                ) % 4
 
         else:
             kind = random.choice(["straight", "elbow"])
@@ -465,10 +481,10 @@ def circuit_is_connected(tiles):
     if len(tiles) != 16:
         return False
 
-    # Sursa intra prin W la piesa din coltul stanga-sus.
     start = (0, 0)
     target = (3, 3)
 
+    # Sursa intra prin partea stanga a primei piese.
     if "W" not in get_ports(tiles[0]):
         return False
 
@@ -487,7 +503,8 @@ def circuit_is_connected(tiles):
         index = row * CIRCUIT_SIZE + col
         ports = get_ports(tiles[index])
 
-        # Capsula este conectata la iesirea de jos.
+        # Capsula necesita o conexiune spre jos
+        # la ultima piesa, din coltul dreapta-jos.
         if (row, col) == target and "S" in ports:
             return True
 
@@ -533,10 +550,14 @@ def rotate_circuit(game, index):
     tile["rotation"] = (tile["rotation"] + 1) % 4
 
     if circuit_is_connected(game["circuit"]):
-        game["feedback"] = "Circuit complet! Capsula este alimentata."
+        game["feedback"] = (
+            "Circuit complet! Capsula este alimentata."
+        )
         advance_stage(game)
     else:
-        game["feedback"] = "Piesa rotita. Continua sa conectezi circuitul."
+        game["feedback"] = (
+            "Piesa rotita. Continua sa conectezi circuitul."
+        )
 
 
 # =========================================================
@@ -597,7 +618,9 @@ def enter_stage(game, stage):
         game["stage"] = 7
         game["stage_name"] = "Misiune finalizata"
         game["status"] = "won"
-        game["feedback"] = "Felicitari! Ai terminat RoboScape."
+        game["feedback"] = (
+            "Felicitari! Ai terminat RoboScape."
+        )
 
 
 def advance_stage(game):
@@ -668,7 +691,7 @@ def public_state(game):
         "hints": game["hints"],
         "successes": game["successes"],
 
-        # Labirint: game.js asteapta coordonate [rand, coloana].
+        # Labirint
         "maze_walls": MAZE_WALLS,
         "maze_pos": game["maze_pos"],
 
@@ -696,7 +719,7 @@ def public_state(game):
         # Puzzle logic
         "logic_question": game["logic_question"],
 
-        # Circuit: game.js asteapta kind si rotation.
+        # Circuit electric
         "circuit": game["circuit"]
     }
 
