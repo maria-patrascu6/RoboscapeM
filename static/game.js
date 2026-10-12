@@ -1,134 +1,416 @@
 
-const gameArea = document.getElementById("gameArea");
+const area = document.getElementById("game-area");
+const feedback = document.getElementById("feedback");
 
-async function sendAction(command, extra = {}) {
-    const response = await fetch("/action", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ command, ...extra })
-    });
+let currentState = null;
+let hideRequested = false;
+let busy = false;
 
-    const state = await response.json();
-    renderGame(state);
-}
+const colorClasses = ["blue", "yellow", "purple", "green", "red"];
 
-async function loadGame() {
+async function getState() {
     const response = await fetch("/state");
-    renderGame(await response.json());
+    if (!response.ok) throw new Error("Nu s-a putut incarca jocul.");
+    return response.json();
 }
 
-function renderGame(state) {
-    document.getElementById("stage").textContent =
-        state.finished ? "✓" : state.stage;
+async function sendAction(action) {
+    if (busy) return;
+    busy = true;
 
-    document.getElementById("difficulty").textContent =
-        state.difficulty + "/3";
+    try {
+        const response = await fetch("/action", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(action)
+        });
 
-    document.getElementById("mistakes").textContent = state.mistakes;
-    document.getElementById("hints").textContent = state.hints;
-    document.getElementById("stageName").textContent =
-        state.stage_name.toUpperCase();
-    document.getElementById("description").textContent =
-        state.description;
-    document.getElementById("message").textContent = state.message;
-
-    document.getElementById("hintButton").disabled = state.finished;
-
-    if (state.finished) {
-        gameArea.innerHTML = `
-            <div class="completion">
-                <h2>🚀 Misiune îndeplinită!</h2>
-                <p>Ai trecut prin toate cele patru etape ale RoboScape.</p>
-                <p>CORE: Felicitări, exploratorule!</p>
-            </div>`;
-        return;
+        if (!response.ok) throw new Error("Actiunea nu a reusit.");
+        currentState = await response.json();
+        render(currentState);
+    } catch (error) {
+        feedback.textContent = "Eroare de conexiune. Reincarca pagina.";
+    } finally {
+        busy = false;
     }
+}
 
-    if (state.stage === 1) {
-        renderMaze(state);
-    } else {
-        renderPuzzle(state);
-    }
+function makeButton(text, className, action, disabled = false) {
+    const button = document.createElement("button");
+    button.textContent = text;
+    button.className = className;
+    button.disabled = disabled;
+    button.addEventListener("click", action);
+    return button;
+}
+
+function addDescription(parent, text) {
+    const paragraph = document.createElement("p");
+    paragraph.className = "game-description";
+    paragraph.textContent = text;
+    parent.appendChild(paragraph);
 }
 
 function renderMaze(state) {
-    let html = '<div class="maze">';
+    addDescription(
+        area,
+        "Foloseste sagetile pentru a ajunge la iesirea verde din coltul din dreapta jos."
+    );
 
-    for (let row = 0; row < state.maze.length; row++) {
-        for (let col = 0; col < state.maze[row].length; col++) {
-            const isWall = state.maze[row][col] === 1;
-            const isPlayer = row === state.x && col === state.y;
-            const isExit = row === 4 && col === 4;
+    const maze = document.createElement("div");
+    maze.className = "maze";
 
-            let classes = "cell";
-            if (isWall) classes += " wall";
-            if (isExit) classes += " exit";
+    const walls = new Set(state.maze_walls.map(p => p.join(",")));
+    const [playerRow, playerCol] = state.maze_pos;
 
-            let symbol = "";
-            if (isPlayer) symbol = "🤖";
-            else if (isExit) symbol = "🚪";
-            else if (isWall) symbol = "▪";
+    for (let row = 0; row < 7; row++) {
+        for (let col = 0; col < 7; col++) {
+            const cell = document.createElement("div");
+            cell.className = "maze-cell";
 
-            html += `<div class="${classes}">${symbol}</div>`;
+            if (walls.has(`${row},${col}`)) {
+                cell.classList.add("wall");
+                cell.textContent = "■";
+            } else if (row === playerRow && col === playerCol) {
+                cell.classList.add("player");
+                cell.textContent = "🤖";
+            } else if (row === 6 && col === 6) {
+                cell.classList.add("exit");
+                cell.textContent = "EXIT";
+            } else {
+                cell.textContent = "·";
+            }
+
+            maze.appendChild(cell);
         }
     }
 
-    html += '</div>';
-    html += `
-        <div class="controls">
-            <span></span>
-            <button data-direction="up" aria-label="Sus">↑</button>
-            <span></span>
-            <button data-direction="left" aria-label="Stânga">←</button>
-            <button data-direction="down" aria-label="Jos">↓</button>
-            <button data-direction="right" aria-label="Dreapta">→</button>
-        </div>
-        <p style="text-align:center">Ghidează robotul spre ușa de ieșire.</p>`;
+    area.appendChild(maze);
+    addDirections(area, "maze_move");
+}
 
-    gameArea.innerHTML = html;
+function addDirections(parent, actionType) {
+    const controls = document.createElement("div");
+    controls.className = "controls";
 
-    gameArea.querySelectorAll("[data-direction]").forEach(button => {
-        button.addEventListener("click", () => {
-            sendAction("move", {
-                direction: button.dataset.direction
-            });
+    const items = [
+        ["", ""], ["↑", "up"], ["", ""],
+        ["←", "left"], ["↓", "down"], ["→", "right"]
+    ];
+
+    items.forEach(([label, direction]) => {
+        if (!direction) {
+            const blank = document.createElement("div");
+            blank.className = "empty-control";
+            controls.appendChild(blank);
+            return;
+        }
+
+        controls.appendChild(
+            makeButton(label, "control-button", () =>
+                sendAction({type: actionType, direction})
+            )
+        );
+    });
+
+    parent.appendChild(controls);
+}
+
+function renderBomb(state) {
+    const showing = state.bomb_phase === "show";
+
+    addDescription(
+        area,
+        showing
+            ? "Memoreaza simbolurile in ordinea afisata. Dupa disparitie, reproduce secventa."
+            : "Selecteaza simbolurile in aceeasi ordine. Nu lasa timpul sa expire."
+    );
+
+    if (showing) {
+        const sequence = document.createElement("div");
+        sequence.className = "memory-sequence";
+
+        state.bomb_sequence.forEach(symbol => {
+            const item = document.createElement("div");
+            item.className = "memory-symbol";
+            item.textContent = symbol;
+            sequence.appendChild(item);
         });
+
+        area.appendChild(sequence);
+
+        const remaining = Math.max(
+            0, Math.ceil(state.bomb_show_until - Date.now() / 1000)
+        );
+
+        const timer = document.createElement("p");
+        timer.className = "timer";
+        timer.textContent = `MEMOREAZA: ${remaining}s`;
+        area.appendChild(timer);
+
+        if (remaining <= 0 && !hideRequested) {
+            hideRequested = true;
+            sendAction({type: "hide_bomb"});
+        }
+        return;
+    }
+
+    hideRequested = false;
+
+    const remaining = Math.max(
+        0, Math.ceil(state.bomb_deadline - Date.now() / 1000)
+    );
+
+    const timer = document.createElement("p");
+    timer.className = "timer";
+    timer.textContent = `TIMP RAMAS: ${remaining}s`;
+    area.appendChild(timer);
+
+    const progress = document.createElement("p");
+    progress.textContent =
+        `Simboluri corecte: ${state.bomb_input.length}`;
+    area.appendChild(progress);
+
+    const buttons = document.createElement("div");
+    buttons.className = "symbol-buttons";
+
+    state.symbols.forEach(symbol => {
+        buttons.appendChild(
+            makeButton(symbol, "symbol-button", () =>
+                sendAction({type: "bomb_pick", symbol})
+            )
+        );
     });
+
+    area.appendChild(buttons);
 }
 
-function renderPuzzle(state) {
-    gameArea.innerHTML = `
-        <div class="puzzle">
-            <h3>${state.puzzle}</h3>
-            <form id="answerForm">
-                <label for="answerInput">Răspunsul tău:</label><br>
-                <input
-                    id="answerInput"
-                    name="answer"
-                    type="number"
-                    required
-                    autocomplete="off"
-                >
-                <br>
-                <button type="submit">Verifică răspunsul</button>
-            </form>
-        </div>`;
+function renderWires(state) {
+    addDescription(
+        area,
+        "Ordinea necesara este afisata mai jos. Apasa cablurile unul cate unul, de la primul la ultimul."
+    );
 
-    document.getElementById("answerForm").addEventListener("submit", event => {
+    const target = document.createElement("div");
+    target.className = "memory-sequence";
+
+    state.wire_target.forEach((colorIndex, i) => {
+        const item = document.createElement("div");
+        item.className = "memory-symbol";
+        item.style.fontSize = "0.9rem";
+        item.style.color = ["#64b5ff", "#ffe16a", "#c49bff", "#64f0ae", "#ff7589"][colorIndex];
+        item.textContent = `${i + 1}. ${state.colors[colorIndex]}`;
+        target.appendChild(item);
+    });
+
+    area.appendChild(target);
+
+    const progress = document.createElement("p");
+    progress.textContent = `Conectate corect: ${state.wire_input.length} / ${state.wire_target.length}`;
+    area.appendChild(progress);
+
+    const buttons = document.createElement("div");
+    buttons.className = "wire-buttons";
+
+    state.colors.forEach((color, index) => {
+        buttons.appendChild(
+            makeButton(
+                color,
+                `color-button ${colorClasses[index]}`,
+                () => sendAction({type: "wire_pick", color: index})
+            )
+        );
+    });
+
+    area.appendChild(buttons);
+}
+
+function renderSecurityGrid(state) {
+    addDescription(
+        area,
+        "Navigheaza de la START in coltul din stanga sus pana la EXIT. Evita peretii."
+    );
+
+    const grid = document.createElement("div");
+    grid.className = "security-grid";
+
+    const walls = new Set(state.grid_walls.map(p => p.join(",")));
+    if (state.difficulty >= 2) walls.add("3,3");
+
+    const [playerRow, playerCol] = state.grid_pos;
+
+    for (let row = 0; row < 5; row++) {
+        for (let col = 0; col < 5; col++) {
+            const cell = document.createElement("div");
+            cell.className = "security-cell";
+
+            if (walls.has(`${row},${col}`)) {
+                cell.classList.add("wall");
+                cell.textContent = "■";
+            } else if (row === playerRow && col === playerCol) {
+                cell.classList.add("player");
+                cell.textContent = "🤖";
+            } else if (row === 4 && col === 4) {
+                cell.classList.add("exit");
+                cell.textContent = "EXIT";
+            } else {
+                cell.textContent = "·";
+            }
+
+            grid.appendChild(cell);
+        }
+    }
+
+    area.appendChild(grid);
+    addDirections(area, "grid_move");
+}
+
+function renderLogic(state) {
+    addDescription(area, "Completeaza secventa numerica:");
+
+    const question = document.createElement("h3");
+    question.textContent = state.logic_question;
+    question.style.fontSize = "1.5rem";
+    area.appendChild(question);
+
+    const form = document.createElement("form");
+    form.className = "answer-form";
+
+    const input = document.createElement("input");
+    input.type = "number";
+    input.inputMode = "numeric";
+    input.placeholder = "Raspuns";
+    input.required = true;
+    input.setAttribute("aria-label", "Raspunsul la secventa");
+
+    const submit = document.createElement("button");
+    submit.className = "primary-button";
+    submit.textContent = "Verifica";
+
+    form.append(input, submit);
+    form.addEventListener("submit", event => {
         event.preventDefault();
-
-        const answer = document.getElementById("answerInput").value;
-        sendAction("answer", { answer });
+        sendAction({type: "logic_submit", answer: input.value});
     });
+
+    area.appendChild(form);
 }
 
-document.getElementById("hintButton").addEventListener("click", () => {
-    sendAction("hint");
+function renderCircuit(state) {
+    addDescription(
+        area,
+        "Roteste piesele pana cand conectezi sursa din stanga sus cu iesirea din partea de jos. Apasa o piesa pentru a o roti."
+    );
+
+    const legend = document.createElement("p");
+    legend.className = "circuit-legend";
+    legend.textContent = "SURSĂ ◀  →  CIRCUIT  →  CAPSULĂ ▼";
+    area.appendChild(legend);
+
+    const grid = document.createElement("div");
+    grid.className = "circuit-grid";
+
+    state.circuit.forEach((tile, index) => {
+        const button = document.createElement("button");
+        button.className = `circuit-tile ${tile.kind}`;
+        button.setAttribute("aria-label", `Roteste piesa ${index + 1}`);
+
+        const pipe = document.createElement("span");
+        pipe.className = "pipe";
+        pipe.textContent = tile.kind === "straight" ? "│" : "└";
+        pipe.style.transform = `rotate(${tile.rotation * 90}deg)`;
+
+        button.appendChild(pipe);
+        button.addEventListener("click", () =>
+            sendAction({type: "circuit_rotate", index})
+        );
+
+        grid.appendChild(button);
+    });
+
+    area.appendChild(grid);
+}
+
+function renderVictory(state) {
+    const panel = document.createElement("div");
+    panel.className = "victory";
+
+    const icon = document.createElement("div");
+    icon.className = "victory-icon";
+    icon.textContent = "🚀";
+
+    const title = document.createElement("h3");
+    title.textContent = "MISIUNE REUSITA";
+
+    const description = document.createElement("p");
+    description.textContent =
+        `Ai terminat misiunea cu dificultatea ${state.difficulty}, ${state.mistakes} greseli si ${state.hints} indicii.`;
+
+    panel.append(icon, title, description);
+    area.appendChild(panel);
+}
+
+function render(state) {
+    currentState = state;
+
+    document.getElementById("stage-number").textContent =
+        state.stage === 7 ? "6 / 6" : `${state.stage} / 6`;
+
+    document.getElementById("difficulty").textContent = state.difficulty;
+    document.getElementById("mistakes").textContent = state.mistakes;
+    document.getElementById("hints").textContent = state.hints;
+    document.getElementById("stage-name").textContent = state.stage_name;
+    document.getElementById("stage-label").textContent =
+        state.stage === 7 ? "MISSION COMPLETE" :
+        `STAGE ${String(state.stage).padStart(2, "0")}`;
+
+    feedback.textContent = state.feedback;
+    area.replaceChildren();
+
+    if (state.status === "won" || state.stage === 7) {
+        renderVictory(state);
+        return;
+    }
+
+    switch (state.stage) {
+        case 1: renderMaze(state); break;
+        case 2: renderBomb(state); break;
+        case 3: renderWires(state); break;
+        case 4: renderSecurityGrid(state); break;
+        case 5: renderLogic(state); break;
+        case 6: renderCircuit(state); break;
+        default:
+            area.textContent = "Etapa nu este disponibila.";
+    }
+}
+
+document.getElementById("hint-button").addEventListener("click", () => {
+    sendAction({type: "hint"});
 });
 
-document.getElementById("restartButton").addEventListener("click", async () => {
-    const response = await fetch("/restart", { method: "POST" });
-    renderGame(await response.json());
+document.getElementById("restart-button").addEventListener("click", async () => {
+    if (!confirm("Vrei sa reincepi misiunea de la prima etapa?")) return;
+
+    hideRequested = false;
+
+    const response = await fetch("/restart", {method: "POST"});
+    currentState = await response.json();
+    render(currentState);
 });
 
-loadGame();
+async function refreshState() {
+    try {
+        const state = await getState();
+
+        if (state.bomb_phase !== "show") {
+            hideRequested = false;
+        }
+
+        render(state);
+    } catch (error) {
+        feedback.textContent = "Conexiunea cu serverul a fost intrerupta.";
+    }
+}
+
+refreshState();
+setInterval(refreshState, 500);
