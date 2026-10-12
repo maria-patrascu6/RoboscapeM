@@ -168,8 +168,8 @@ def create_circuit(game):
 
     for index, (kind, correct_rotation) in enumerate(solution):
         rotation = random.randrange(4)
-        if index in (0, 1, 2, 3, 5, 10, 11, 15):
-            # Aceste piese fac parte din traseul principal.
+       if index in (0, 1, 2, 3, 7, 11, 15):
+             # Aceste piese fac parte din traseul principal.
             rotation = (correct_rotation + random.choice([1, 2, 3])) % 4
 
         tiles.append({
