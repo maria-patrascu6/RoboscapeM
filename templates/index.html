@@ -1,0 +1,58 @@
+
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RoboScape</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <main class="container">
+        <header>
+            <p class="eyebrow">MISSION CONTROL</p>
+            <h1>RoboScape</h1>
+            <p class="subtitle">O misiune de evadare ghidată de inteligența artificială.</p>
+        </header>
+
+        <section class="status">
+            <div>
+                <span class="label">ETAPA</span>
+                <strong id="stage">1</strong>
+            </div>
+            <div>
+                <span class="label">DIFICULTATE</span>
+                <strong id="difficulty">1/3</strong>
+            </div>
+            <div>
+                <span class="label">GREȘELI</span>
+                <strong id="mistakes">0</strong>
+            </div>
+            <div>
+                <span class="label">INDICII</span>
+                <strong id="hints">0</strong>
+            </div>
+        </section>
+
+        <section class="game-panel">
+            <p class="eyebrow" id="stageName">LABIRINTUL</p>
+            <h2 id="description">Se încarcă misiunea...</h2>
+            <div id="gameArea"></div>
+
+            <div class="core-message">
+                <span>CORE</span>
+                <p id="message">Se inițializează sistemele...</p>
+            </div>
+
+            <div class="actions">
+                <button id="hintButton" class="secondary">Cere un indiciu</button>
+                <button id="restartButton" class="secondary">Reîncepe jocul</button>
+            </div>
+        </section>
+
+        <footer>ROBOSCAPE · ADAPTIVE MISSION SYSTEM</footer>
+    </main>
+
+    <script src="{{ url_for('static', filename='game.js') }}"></script>
+</body>
+</html>
