@@ -646,11 +646,14 @@ document.getElementById("restart-button").addEventListener("click", async () => 
 async function startGame() {
     feedback.textContent = "Se incarca misiunea...";
 
+   
     try {
         const state = await getState();
         render(state);
-
     } catch (error) {
+        console.error("Eroare la încărcarea jocului:", error);
         feedback.textContent =
-            "Conexiunea cu serverul a fost intrerupta. " +
-            "
+            "Conexiunea cu serverul a fost întreruptă. " +
+            "Verifică dacă aplicația Render funcționează.";
+    }
+
