@@ -4,9 +4,10 @@ const $ = (id) => document.getElementById(id);
 let currentState = null;
 let wireOrder = [];
 let wireStageKey = null;
-let selectedWire = null;
+let draggedWire = null;
 
-const SYMBOLS = ["▲", "●", "■", "◆", "★", "⬟", "✚", "⬢"];
+// Exact aceleași 6 forme ca în main.py.
+const SYMBOLS = ["▲", "●", "■", "◆", "★", "⬟"];
 
 async function api(url, options = {}) {
     const response = await fetch(url, {
@@ -76,19 +77,17 @@ function renderState(state) {
     if (wireStageKey !== state.stage) {
         wireStageKey = state.stage;
         wireOrder = (state.wire_target || []).slice();
-        selectedWire = null;
+        draggedWire = null;
     }
 
     $("player-label").textContent = state.player_name || "Explorator";
-    $("stage-label").textContent =
-        state.stage <= 6
-            ? `Etapa ${state.stage} din 6`
-            : "Misiune completă";
+    $("stage-label").textContent = state.stage <= 6
+        ? `Etapa ${state.stage} din 6`
+        : "Misiune completă";
 
-    $("stage-number").textContent =
-        state.stage <= 6
-            ? String(state.stage).padStart(2, "0")
-            : "✓";
+    $("stage-number").textContent = state.stage <= 6
+        ? String(state.stage).padStart(2, "0")
+        : "✓";
 
     $("challenge-title").textContent =
         state.stage_name || "Misiune completă";
@@ -106,9 +105,10 @@ function renderState(state) {
     $("hints-stat").textContent = state.hints;
     $("successes-stat").textContent = state.successes;
 
-    const progress = Math.min(100, Math.round(
-        Math.min(state.stage, 6) / 6 * 100
-    ));
+    const progress = Math.min(
+        100,
+        Math.round(Math.min(state.stage, 6) / 6 * 100)
+    );
 
     $("progress-fill").style.width = `${progress}%`;
     $("progress-text").textContent = `${progress}%`;
@@ -126,6 +126,7 @@ function renderState(state) {
         $("challenge-title").textContent = "Ai evadat!";
         $("challenge-description").textContent =
             "Ai terminat toate cele șase provocări.";
+
         $("game-content").innerHTML = `
             <div class="victory">
                 <div class="victory-icon">🚀</div>
@@ -150,9 +151,7 @@ function renderChallenge(state) {
     const area = $("game-content");
     area.innerHTML = "";
 
-    if (state.status !== "playing") {
-        return;
-    }
+    if (state.status !== "playing") return;
 
     switch (state.stage) {
         case 1:
@@ -196,10 +195,8 @@ function renderMaze(state, area) {
             if (cell === 1) {
                 button.classList.add("wall");
                 button.disabled = true;
-                button.setAttribute("aria-label", "Perete");
             } else {
                 button.classList.add("open-cell");
-                button.setAttribute("aria-label", `Celula ${r + 1}, ${c + 1}`);
             }
 
             if (player[0] === r && player[1] === c) {
@@ -239,10 +236,8 @@ function renderSecurityGrid(state, area) {
             button.classList.add("player-cell");
         } else if (index === 24) {
             button.textContent = "🚪";
-        } else if (safe) {
-            button.textContent = "•";
         } else {
-            button.textContent = "×";
+            button.textContent = safe ? "•" : "×";
         }
 
         board.appendChild(button);
@@ -257,25 +252,24 @@ function makeControls(actionType) {
     const controls = document.createElement("div");
     controls.className = "direction-controls";
 
-    const layout = [
-        { text: "↑", dx: 0, dy: -1, label: "Sus" },
-        { text: "←", dx: -1, dy: 0, label: "Stânga" },
-        { text: "↓", dx: 0, dy: 1, label: "Jos" },
-        { text: "→", dx: 1, dy: 0, label: "Dreapta" },
-    ];
-
-    layout.forEach((item) => {
+    [
+        { text: "↑", dx: 0, dy: -1 },
+        { text: "←", dx: -1, dy: 0 },
+        { text: "↓", dx: 0, dy: 1 },
+        { text: "→", dx: 1, dy: 0 },
+    ].forEach((item) => {
         const button = document.createElement("button");
         button.type = "button";
         button.className = "direction-button";
         button.textContent = item.text;
-        button.setAttribute("aria-label", item.label);
+
         button.addEventListener("click", () => {
             sendAction(actionType, {
                 dx: item.dx,
                 dy: item.dy,
             });
         });
+
         controls.appendChild(button);
     });
 
@@ -286,10 +280,17 @@ function renderMemory(state, area) {
     const wrapper = document.createElement("div");
     wrapper.className = "memory-wrapper";
 
+    const bomb = document.createElement("div");
+    bomb.className = "bomb-icon";
+    bomb.textContent = "💣";
+    bomb.setAttribute("aria-label", "Bombă reactor");
+    wrapper.appendChild(bomb);
+
     if (state.bomb_phase === "show") {
         const label = document.createElement("p");
         label.className = "memory-label";
-        label.textContent = "Memorează ordinea simbolurilor:";
+        label.textContent =
+            "Memorează secvența de simboluri înainte să dispară:";
         wrapper.appendChild(label);
 
         const sequence = document.createElement("div");
@@ -306,12 +307,14 @@ function renderMemory(state, area) {
 
         const note = document.createElement("p");
         note.className = "muted-note";
-        note.textContent = "Simbolurile vor dispărea în câteva secunde.";
+        note.textContent =
+            "Reține formele și ordinea lor pentru a dezamorsa bomba.";
         wrapper.appendChild(note);
     } else {
         const label = document.createElement("p");
         label.className = "memory-label";
-        label.textContent = "Reproduce șirul, de la stânga la dreapta:";
+        label.textContent =
+            "Alege simbolurile în ordinea în care le-ai văzut:";
         wrapper.appendChild(label);
 
         const progress = document.createElement("p");
@@ -328,9 +331,11 @@ function renderMemory(state, area) {
             button.type = "button";
             button.className = "symbol-button";
             button.textContent = symbol;
+
             button.addEventListener("click", () => {
                 sendAction("bomb_pick", { symbol });
             });
+
             grid.appendChild(button);
         });
 
@@ -340,6 +345,11 @@ function renderMemory(state, area) {
     area.appendChild(wrapper);
 }
 
+/*
+ * CABLURI CU DRAG-AND-DROP
+ * Ordinea corectă este Roșu, Albastru, Galben, Verde.
+ * Poți trage orice cablu pe poziția altui cablu.
+ */
 function renderWires(state, area) {
     const wrapper = document.createElement("div");
     wrapper.className = "wires-wrapper";
@@ -347,7 +357,7 @@ function renderWires(state, area) {
     const instruction = document.createElement("p");
     instruction.className = "memory-label";
     instruction.textContent =
-        "Selectează două cabluri pentru a le schimba pozițiile.";
+        "Glisează cablurile în ordinea corectă, de la 1 la 4.";
     wrapper.appendChild(instruction);
 
     const list = document.createElement("div");
@@ -359,54 +369,173 @@ function renderWires(state, area) {
 
     const colorClasses = ["red", "blue", "yellow", "green"];
 
+    // Indicii pozițiilor, nu pozițiile inițiale ale culorilor.
     wireOrder.forEach((wireIndex, position) => {
+        const slot = document.createElement("div");
+        slot.className = "wire-slot";
+        slot.dataset.position = String(position);
+
+        const number = document.createElement("span");
+        number.className = "wire-number";
+        number.textContent = String(position + 1);
+
         const button = document.createElement("button");
         button.type = "button";
         button.className = "wire-item";
-
-        if (selectedWire === position) {
-            button.classList.add("wire-selected");
-        }
+        button.draggable = true;
+        button.dataset.wireIndex = String(wireIndex);
+        button.setAttribute(
+            "aria-label",
+            `Trage cablul ${colors[wireIndex]}`
+        );
 
         const line = document.createElement("span");
-        line.className = `wire-line ${colorClasses[wireIndex] || "red"}`;
+        line.className = `wire-line ${colorClasses[wireIndex]}`;
 
         const label = document.createElement("span");
-        label.textContent = `${position + 1}. ${colors[wireIndex]}`;
+        label.className = "wire-name";
+        label.textContent = colors[wireIndex];
 
-        button.appendChild(line);
-        button.appendChild(label);
+        const grip = document.createElement("span");
+        grip.className = "wire-grip";
+        grip.textContent = "⠿";
+        grip.setAttribute("aria-hidden", "true");
 
-        button.addEventListener("click", () => {
-            if (selectedWire === null) {
-                selectedWire = position;
-                renderWires(currentState, $("game-content"));
-                return;
-            }
+        button.append(line, label, grip);
+        slot.append(number, button);
+        list.appendChild(slot);
 
-            if (selectedWire === position) {
-                selectedWire = null;
-                renderWires(currentState, $("game-content"));
-                return;
-            }
+        button.addEventListener("dragstart", (event) => {
+            draggedWire = position;
+            slot.classList.add("wire-dragging");
 
-            const temp = wireOrder[selectedWire];
-            wireOrder[selectedWire] = wireOrder[position];
-            wireOrder[position] = temp;
-            selectedWire = null;
-
-            if (wireOrder.every((value, index) => value === index)) {
-                sendAction("wire_solved");
-            } else {
-                sendAction("wire_wrong");
+            if (event.dataTransfer) {
+                event.dataTransfer.effectAllowed = "move";
+                event.dataTransfer.setData(
+                    "text/plain",
+                    String(position)
+                );
             }
         });
 
-        list.appendChild(button);
+        button.addEventListener("dragend", () => {
+            draggedWire = null;
+            list.querySelectorAll(".wire-slot").forEach((element) => {
+                element.classList.remove(
+                    "wire-dragging",
+                    "wire-drop-target"
+                );
+            });
+        });
+
+        slot.addEventListener("dragover", (event) => {
+            event.preventDefault();
+            slot.classList.add("wire-drop-target");
+
+            if (event.dataTransfer) {
+                event.dataTransfer.dropEffect = "move";
+            }
+        });
+
+        slot.addEventListener("dragleave", (event) => {
+            if (!slot.contains(event.relatedTarget)) {
+                slot.classList.remove("wire-drop-target");
+            }
+        });
+
+        slot.addEventListener("drop", (event) => {
+            event.preventDefault();
+            slot.classList.remove("wire-drop-target");
+
+            let from = draggedWire;
+
+            if (event.dataTransfer) {
+                const transferred = event.dataTransfer.getData("text/plain");
+
+                if (transferred !== "") {
+                    from = Number(transferred);
+                }
+            }
+
+            const to = position;
+
+            if (
+                from === null ||
+                !Number.isInteger(from) ||
+                from < 0 ||
+                from >= wireOrder.length ||
+                from === to
+            ) {
+                return;
+            }
+
+            const updated = wireOrder.slice();
+            const moved = updated.splice(from, 1)[0];
+            updated.splice(to, 0, moved);
+            wireOrder = updated;
+            draggedWire = null;
+
+            checkWireOrder();
+        });
+
+        // Compatibilitate pentru dispozitive cu ecran tactil:
+        // butoanele sus/jos pot fi folosite și fără drag-and-drop.
+        const moveControls = document.createElement("div");
+        moveControls.className = "wire-move-controls";
+
+        const up = document.createElement("button");
+        up.type = "button";
+        up.className = "wire-move-button";
+        up.textContent = "↑";
+        up.disabled = position === 0;
+        up.setAttribute("aria-label", "Mută cablul în sus");
+        up.addEventListener("click", () => moveWire(position, position - 1));
+
+        const down = document.createElement("button");
+        down.type = "button";
+        down.className = "wire-move-button";
+        down.textContent = "↓";
+        down.disabled = position === wireOrder.length - 1;
+        down.setAttribute("aria-label", "Mută cablul în jos");
+        down.addEventListener("click", () => moveWire(position, position + 1));
+
+        moveControls.append(up, down);
+        slot.appendChild(moveControls);
     });
 
     wrapper.appendChild(list);
     area.appendChild(wrapper);
+}
+
+function moveWire(from, to) {
+    if (
+        from < 0 ||
+        to < 0 ||
+        from >= wireOrder.length ||
+        to >= wireOrder.length
+    ) {
+        return;
+    }
+
+    const updated = wireOrder.slice();
+    const moved = updated.splice(from, 1)[0];
+    updated.splice(to, 0, moved);
+    wireOrder = updated;
+
+    checkWireOrder();
+}
+
+function checkWireOrder() {
+    if (wireOrder.every((value, index) => value === index)) {
+        // Ordinea este corectă: trecem la etapa următoare.
+        sendAction("wire_solved");
+        return;
+    }
+
+    // Trimitem greșeala serverului, dar păstrăm ordinea nouă
+    // pe ecran ca jucătorul să poată continua să mute cablurile.
+    sendAction("wire_wrong");
+    renderWires(currentState, $("game-content"));
 }
 
 function renderLogic(state, area) {
@@ -433,14 +562,11 @@ function renderLogic(state, area) {
     button.className = "primary-button";
     button.textContent = "Verifică răspunsul";
 
-    form.appendChild(input);
-    form.appendChild(button);
+    form.append(input, button);
 
     form.addEventListener("submit", (event) => {
         event.preventDefault();
-        sendAction("logic_submit", {
-            answer: input.value,
-        });
+        sendAction("logic_submit", { answer: input.value });
     });
 
     wrapper.appendChild(form);
@@ -454,7 +580,7 @@ function renderCircuit(state, area) {
     const note = document.createElement("p");
     note.className = "muted-note";
     note.textContent =
-        "Apasă pe fiecare piesă pentru a o roti cu 90°.";
+        "Apasă pe piese pentru a le roti cu 90° și a conecta circuitul.";
     wrapper.appendChild(note);
 
     const board = document.createElement("div");
@@ -505,8 +631,7 @@ async function loadLeaderboard() {
             score.textContent =
                 `${row.completed}/6 · ${row.mistakes} greșeli`;
 
-            item.appendChild(name);
-            item.appendChild(score);
+            item.append(name, score);
             list.appendChild(item);
         });
     } catch {
