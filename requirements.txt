@@ -1,5 +1,4 @@
 
-Flask
-gunicorn
-scikit-learn
-numpy
+Flask>=3.0,<4.0
+gunicorn>=22.0
+scikit-learn>=1.4
