@@ -4,7 +4,9 @@ from flask import Flask, jsonify, render_template, request, session
 from main import new_game, handle_action, public_state
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "change-this-roboscape-secret")
+app.secret_key = os.environ.get(
+    "SECRET_KEY", "change-this-roboscape-secret"
+)
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax"
