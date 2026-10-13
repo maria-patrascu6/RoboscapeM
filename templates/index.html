@@ -2,70 +2,104 @@
 <!DOCTYPE html>
 <html lang="ro">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RoboScape | Escape Room</title>
-    <link rel="stylesheet" href="/static/style.css">
-    <script src="/static/game.js" defer></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0b1020">
+  <title>RoboScape | Escape Room</title>
+
+  <link
+    rel="stylesheet"
+    href="{{ url_for('static', filename='style.css') }}"
+  >
+
+  <script
+    src="{{ url_for('static', filename='game.js') }}"
+    defer
+  ></script>
 </head>
+
 <body>
-    <header class="topbar">
-        <div class="brand">ROBO<span>SCAPE</span></div>
-        <div class="top-label">SPACE STATION // EMERGENCY MODE</div>
-    </header>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="RoboScape pagina principală">
+      ROBO<span>SCAPE</span>
+    </a>
 
-    <main class="container">
-        <section class="intro">
-            <p class="eyebrow">MISSION CONTROL</p>
-            <h1>Evadează de pe navă.</h1>
-            <p class="subtitle">
-                Rezolvă provocările, repară sistemele și găsește drumul spre evacuare.
-            </p>
-        </section>
+    <span class="top-label">
+      SPACE STATION · EMERGENCY MODE
+    </span>
+  </header>
 
-        <section class="stats">
-            <div class="stat">
-                <span>ETAPĂ</span>
-                <strong id="stage-number">1 / 6</strong>
-            </div>
-            <div class="stat">
-                <span>DIFICULTATE</span>
-                <strong id="difficulty">1</strong>
-            </div>
-            <div class="stat">
-                <span>GREȘELI</span>
-                <strong id="mistakes">0</strong>
-            </div>
-            <div class="stat">
-                <span>INDICII</span>
-                <strong id="hints">0</strong>
-            </div>
-        </section>
+  <main class="container">
+    <section class="intro">
+      <p class="eyebrow">MISSION CONTROL</p>
+      <h1>Evadează de pe navă.</h1>
+      <p class="subtitle">
+        Rezolvă provocările, repară sistemele și găsește drumul spre evacuare.
+      </p>
+    </section>
 
-        <section class="game-panel">
-            <div class="panel-heading">
-                <div>
-                    <p class="eyebrow" id="stage-label">STAGE 01</p>
-                    <h2 id="stage-name">Labirintul navei</h2>
-                </div>
-                <span class="live-indicator">● ONLINE</span>
-            </div>
+    <section class="stats" aria-label="Statistici joc">
+      <div class="stat">
+        <span>ETAPĂ</span>
+        <strong id="stage-number">1 / 6</strong>
+      </div>
 
-            <p id="feedback" class="feedback" aria-live="polite">
-                Se încarcă misiunea...
-            </p>
+      <div class="stat">
+        <span>DIFICULTATE</span>
+        <strong id="difficulty">Mediu</strong>
+      </div>
 
-            <div id="game-area"></div>
+      <div class="stat">
+        <span>GREȘELI</span>
+        <strong id="mistakes">0</strong>
+      </div>
 
-            <div class="panel-actions">
-                <button id="hint-button" class="secondary-button">Cere un indiciu</button>
-                <button id="restart-button" class="danger-button">Reîncepe misiunea</button>
-            </div>
-        </section>
+      <div class="stat">
+        <span>INDICII</span>
+        <strong id="hints">0</strong>
+      </div>
+    </section>
 
-        <p class="footer-note">
-            ROBOSCAPE // Adaptive challenge prototype
-        </p>
-    </main>
+    <section class="game-panel">
+      <div class="panel-heading">
+        <div>
+          <p class="eyebrow" id="stage-label">STAGE 01</p>
+          <h2 id="stage-name">Labirintul navei</h2>
+        </div>
+
+        <span class="live-indicator">
+          <span></span> ONLINE
+        </span>
+      </div>
+
+      <p id="feedback" class="feedback" aria-live="polite">
+        Se încarcă misiunea...
+      </p>
+
+      <div id="game-area" aria-live="polite"></div>
+
+      <div class="panel-actions">
+        <button
+          id="hint-button"
+          class="secondary-button"
+          type="button"
+        >
+          Cere un indiciu
+        </button>
+
+        <button
+          id="restart-button"
+          class="danger-button"
+          type="button"
+        >
+          Reîncepe misiunea
+        </button>
+      </div>
+    </section>
+
+    <p class="footer-note">
+      ROBOSCAPE · Prototip de joc cu dificultate adaptivă
+    </p>
+  </main>
 </body>
 </html>
