@@ -17,14 +17,36 @@
     });
 
     if (!response.ok) {
-      throw new Error(`Cererea a eșuat (${response.status}).`);
+      let message = `Cererea a eșuat (${response.status}).`;
+
+      try {
+        const data = await response.json();
+        if (data.error) message = data.error;
+      } catch (_) {}
+
+      throw new Error(message);
     }
 
     return response.json();
   }
 
-  async function getState() {
-    return api("/state");
+  function el(tag, className = "", text = "") {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined && text !== null) node.textContent = text;
+    return node;
+  }
+
+  function button(text, className, callback, attributes = {}) {
+    const node = el("button", className, text);
+    node.type = "button";
+
+    Object.entries(attributes).forEach(([key, value]) => {
+      node.setAttribute(key, value);
+    });
+
+    node.addEventListener("click", callback);
+    return node;
   }
 
   async function sendAction(action) {
@@ -34,13 +56,17 @@
     setButtonsDisabled(true);
 
     try {
-      render(await api("/action", {
+      const state = await api("/action", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(action)
-      }));
+      });
+
+      render(state);
+
+      if (action.type === "restart" || state.status === "won") {
+        loadLeaderboard();
+      }
     } catch (error) {
       showError(error);
     } finally {
@@ -59,135 +85,118 @@
 
   function showError(error) {
     console.error("RoboScape:", error);
-
-    const feedback = $("feedback");
-
-    if (feedback) {
-      feedback.textContent =
-        "Nu am putut actualiza jocul. Verifică conexiunea și reîncarcă pagina.";
-    }
+    $("feedback").textContent =
+      "Nu am putut actualiza jocul. Reîncarcă pagina sau verifică serverul.";
   }
 
-  function el(tag, className, text) {
-    const node = document.createElement(tag);
+  function renderNameScreen() {
+    const wrap = el("div", "name-screen");
+    wrap.appendChild(el("div", "name-robot", "🤖"));
+    wrap.appendChild(el("h3", "", "Înainte să începi misiunea..."));
+    wrap.appendChild(el(
+      "p", "stage-instructions",
+      "Alege un nume sau o poreclă. Acesta va apărea în clasament."
+    ));
 
-    if (className) {
-      node.className = className;
-    }
+    const form = el("form", "name-form");
+    const input = el("input");
+    input.type = "text";
+    input.name = "player-name";
+    input.maxLength = 30;
+    input.minLength = 2;
+    input.placeholder = "Numele sau porecla ta";
+    input.autocomplete = "nickname";
+    input.required = true;
+    input.setAttribute("aria-label", "Numele sau porecla ta");
 
-    if (text !== undefined && text !== null) {
-      node.textContent = text;
-    }
+    const submit = el("button", "primary-button", "Începe misiunea");
+    submit.type = "submit";
 
-    return node;
-  }
+    const error = el("p", "name-error");
+    error.setAttribute("aria-live", "polite");
 
-  function button(text, className, action, extra = {}) {
-    const b = el("button", className || "action-button", text);
-    b.type = "button";
+    form.append(input, submit);
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const name = input.value.trim().replace(/\s+/g, " ");
 
-    Object.entries(extra).forEach(([key, value]) => {
-      b.setAttribute(key, value);
+      if (name.length < 2) {
+        error.textContent = "Introdu cel puțin 2 caractere.";
+        return;
+      }
+
+      submit.disabled = true;
+      error.textContent = "";
+
+      try {
+        const state = await api("/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name })
+        });
+        render(state);
+        loadLeaderboard();
+      } catch (err) {
+        error.textContent = err.message;
+      } finally {
+        submit.disabled = false;
+      }
     });
 
-    b.addEventListener("click", action);
-
-    return b;
+    wrap.append(form, error);
+    area().replaceChildren(wrap);
+    $("stats-panel").hidden = true;
+    $("hint-button").hidden = true;
+    $("restart-button").hidden = true;
   }
 
   function addMoveControls(parent, type) {
     const pad = el("div", "control-pad");
-
     const moves = [
-      ["empty", ""],
-      ["maze-control", "up"],
-      ["empty", ""],
-      ["maze-control", "left"],
-      ["maze-control", "down"],
-      ["maze-control", "right"]
+      ["", ""], ["up", "↑"], ["", ""],
+      ["left", "←"], ["down", "↓"], ["right", "→"]
     ];
 
-    const labels = {
-      up: "↑",
-      down: "↓",
-      left: "←",
-      right: "→"
-    };
-
-    moves.forEach(([cls, dir]) => {
-      if (cls === "empty") {
+    moves.forEach(([direction, label]) => {
+      if (!direction) {
         pad.appendChild(el("span", "empty"));
       } else {
-        pad.appendChild(
-          button(
-            labels[dir],
-            cls,
-            () => sendAction({
-              type,
-              direction: dir
-            }),
-            { "aria-label": dir }
-          )
-        );
+        pad.appendChild(button(
+          label,
+          "maze-control",
+          () => sendAction({ type, direction }),
+          { "aria-label": direction }
+        ));
       }
     });
 
     parent.appendChild(pad);
   }
 
-  function renderMaze(state, grid = false) {
-    const isGrid = grid;
+  function renderMaze(state, isGrid = false) {
     const size = isGrid ? 5 : 7;
-
-    const walls = isGrid
-      ? (state.grid_walls || [])
-      : (state.maze_walls || []);
-
+    const walls = isGrid ? state.grid_walls : state.maze_walls;
     const pos = isGrid ? state.grid_pos : state.maze_pos;
-
-    const node = el("div", "section-layout");
-    const board = el(
-      "div",
-      isGrid ? "security-grid" : "maze"
-    );
+    const wrap = el("div", "section-layout");
+    const board = el("div", isGrid ? "security-grid" : "maze");
 
     for (let r = 0; r < size; r++) {
       for (let c = 0; c < size; c++) {
-        const wall =
-          walls.some((w) => w[0] === r && w[1] === c) ||
-          (
-            isGrid &&
-            Number(state.difficulty) >= 2 &&
-            r === 3 &&
-            c === 3
-          );
-
-        const cell = el(
-          "div",
-          isGrid ? "security-cell" : "maze-cell"
-        );
+        const cell = el("div", isGrid ? "security-cell" : "maze-cell");
+        const wall = (walls || []).some(
+          (w) => w[0] === r && w[1] === c
+        ) || (isGrid && state.difficulty >= 2 && r === 3 && c === 3);
 
         if (wall) {
           cell.classList.add("wall");
-          cell.setAttribute("aria-label", "Perete");
-        } else if (
-          pos &&
-          pos[0] === r &&
-          pos[1] === c
-        ) {
+        } else if (pos && pos[0] === r && pos[1] === c) {
           cell.classList.add("player");
           cell.textContent = "🤖";
-          cell.setAttribute("aria-label", "Robot");
-        } else if (
-          r === size - 1 &&
-          c === size - 1
-        ) {
+        } else if (r === size - 1 && c === size - 1) {
           cell.classList.add("exit");
           cell.textContent = "↗";
-          cell.setAttribute("aria-label", "Ieșire");
         } else {
           cell.textContent = "·";
-          cell.style.color = "#42536e";
         }
 
         board.appendChild(cell);
@@ -195,74 +204,49 @@
     }
 
     const controls = el("div", "stage-instructions");
+    controls.appendChild(el(
+      "p", "",
+      isGrid
+        ? "Treci prin grila de securitate și ajungi la ieșirea din dreapta-jos."
+        : "Găsește ieșirea din labirint și evită pereții."
+    ));
 
-    controls.appendChild(
-      el(
-        "p",
-        "",
-        isGrid
-          ? "Treci prin grila de securitate și ajungi la ieșirea din colțul dreapta-jos."
-          : "Găsește ieșirea din labirint. Evită pereții."
-      )
-    );
+    addMoveControls(controls, isGrid ? "grid_move" : "maze_move");
+    controls.appendChild(el(
+      "p", "maze-help",
+      "Poți folosi și tastele săgeți de pe tastatură."
+    ));
 
-    addMoveControls(
-      controls,
-      isGrid ? "grid_move" : "maze_move"
-    );
-
-    controls.appendChild(
-      el(
-        "p",
-        "maze-help",
-        "Poți folosi și tastele săgeți de pe tastatură."
-      )
-    );
-
-    node.append(board, controls);
-    area().replaceChildren(node);
+    wrap.append(board, controls);
+    area().replaceChildren(wrap);
   }
 
-  function updateBombTimer(state = currentState) {
-    if (!state || Number(state.stage) !== 2) return;
-
+  function updateBombTimer(state) {
     const timer = document.querySelector(".timer");
-    if (!timer) return;
+    if (!timer || !state || state.stage !== 2) return;
 
     const showing = state.bomb_phase === "show";
-
     const deadline = showing
       ? state.bomb_show_until
       : state.bomb_deadline;
 
     const seconds = Math.max(
-      0,
-      Math.ceil(
-        (Number(deadline) || 0) - Date.now() / 1000
-      )
+      0, Math.ceil((Number(deadline) || 0) - Date.now() / 1000)
     );
 
     timer.textContent = showing
       ? `Memorează: ${seconds} s`
       : `Timp rămas: ${seconds} s`;
 
-    timer.classList.toggle(
-      "timer-warning",
-      !showing && seconds <= 5
-    );
+    timer.classList.toggle("timer-warning", !showing && seconds <= 5);
   }
 
   function renderBomb(state) {
     const wrap = el("div", "bomb-panel");
     const left = el("div", "stage-instructions");
-
-    left.appendChild(
-      el(
-        "p",
-        "",
-        "Memorează simbolurile afișate pe bombă, apoi introdu-le în aceeași ordine."
-      )
-    );
+    left.appendChild(el(
+      "p", "", "Memorează simbolurile, apoi introdu-le în aceeași ordine."
+    ));
 
     const illustration = el("div", "bomb-illustration");
     illustration.appendChild(el("div", "bomb-fuse"));
@@ -272,77 +256,47 @@
     const shell = el("div", "bomb-shell");
     shell.appendChild(el("span", "bomb-light"));
     shell.appendChild(el("span", "bomb-label", "ROBO BOMB"));
-    shell.appendChild(
-      el(
-        "span",
-        "bomb-display-small",
-        state.bomb_phase === "show" ? "MEM" : "ARM"
-      )
-    );
+    shell.appendChild(el(
+      "span", "bomb-display-small",
+      state.bomb_phase === "show" ? "MEM" : "ARM"
+    ));
 
     illustration.appendChild(shell);
     left.appendChild(illustration);
 
     const display = el("div", "bomb-display");
-
     if (state.bomb_phase === "show") {
       (state.bomb_sequence || []).forEach((symbol) => {
         display.appendChild(el("span", "", symbol));
       });
-
-      if (!(state.bomb_sequence || []).length) {
-        display.textContent = "◈ ◈ ◈";
-      }
     } else {
-      display.textContent =
-        (state.bomb_input || []).join("  ") || "?  ?  ?";
+      display.textContent = (state.bomb_input || []).join("  ") || "?  ?  ?";
     }
 
-    left.appendChild(display);
-    left.appendChild(el("p", "timer", ""));
-
+    left.append(display, el("p", "timer"));
     const right = el("div", "stage-instructions");
-
-    right.appendChild(
-      el(
-        "p",
-        "",
-        state.bomb_phase === "show"
-          ? "Memorează secvența înainte să dispară."
-          : "Apasă simbolurile în ordinea memorată înainte să expire timpul."
-      )
-    );
-
-    const symbols = el("div", "symbol-buttons");
-
-    (
-      state.symbols ||
-      ["▲", "●", "■", "◆", "★"]
-    ).forEach((symbol) => {
-      symbols.appendChild(
-        button(
-          symbol,
-          "symbol-button",
-          () => sendAction({
-            type: "bomb_pick",
-            symbol
-          }),
-          { "aria-label": `Simbol ${symbol}` }
-        )
-      );
-    });
+    right.appendChild(el(
+      "p", "",
+      state.bomb_phase === "show"
+        ? "Memorează secvența înainte să dispară."
+        : "Apasă simbolurile în ordinea memorată."
+    ));
 
     if (state.bomb_phase === "input") {
+      const symbols = el("div", "symbol-buttons");
+      (state.symbols || []).forEach((symbol) => {
+        symbols.appendChild(button(
+          symbol, "symbol-button",
+          () => sendAction({ type: "bomb_pick", symbol })
+        ));
+      });
       right.appendChild(symbols);
     }
 
-    right.appendChild(
-      el(
-        "p",
-        "memory-progress",
-        `Simboluri introduse: ${(state.bomb_input || []).length}`
-      )
-    );
+    right.appendChild(el(
+      "p", "memory-progress",
+      `Simboluri introduse: ${(state.bomb_input || []).length}`
+    ));
 
     wrap.append(left, right);
     area().replaceChildren(wrap);
@@ -351,184 +305,79 @@
 
   function renderWires(state) {
     const panel = el("div", "wire-panel");
+    panel.appendChild(el(
+      "p", "stage-instructions",
+      "Descurcă toate cablurile. Trage capetele rotunde din dreapta până când culorile sunt în ordine."
+    ));
 
-    panel.appendChild(
-      el(
-        "p",
-        "stage-instructions",
-        "Descurcă toate cablurile: trage capetele colorate din dreapta în sus sau în jos până când liniile nu se mai intersectează."
-      )
-    );
-
-    const colors = state.colors || [
-      "Albastru", "Galben", "Mov", "Verde"
-    ];
-
+    const colors = state.colors || [];
+    const order = (state.wire_target || []).slice();
     const palette = {
-      "Albastru": "#4ea5ff",
-      "Galben": "#f5cf54",
-      "Mov": "#b49aff",
-      "Verde": "#58d6a0",
-      "Roșu": "#ff6f83"
+      Albastru: "#4ea5ff", Galben: "#f5cf54",
+      Mov: "#b49aff", Verde: "#58d6a0", Roșu: "#ff6f83"
     };
 
-    const count = colors.length;
-    const order = (
-      state.wire_target ||
-      Array.from({ length: count }, (_, i) => i)
-    ).slice();
-
-    const svgNS = "http://www.w3.org/2000/svg";
-    const svg = document.createElementNS(svgNS, "svg");
-
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(ns, "svg");
     svg.setAttribute("viewBox", "0 0 360 250");
     svg.setAttribute("role", "img");
-    svg.setAttribute(
-      "aria-label",
-      "Cabluri colorate care pot fi descurcate prin tragerea capetelor din dreapta"
-    );
+    svg.setAttribute("aria-label", "Cabluri colorate interactive");
     svg.classList.add("tangled-cables");
 
     const top = 28;
-    const step = count > 1 ? 194 / (count - 1) : 0;
+    const step = colors.length > 1 ? 194 / (colors.length - 1) : 0;
     const yFor = (slot) => top + slot * step;
-
     let drag = null;
 
-    function svgElement(tag, attrs = {}) {
-      const node = document.createElementNS(svgNS, tag);
-
-      Object.entries(attrs).forEach(([key, value]) => {
-        node.setAttribute(key, String(value));
-      });
-
+    function addSvg(tag, attrs) {
+      const node = document.createElementNS(ns, tag);
+      Object.entries(attrs).forEach(([k, v]) => node.setAttribute(k, v));
       return node;
     }
 
-    function drawCables() {
+    function draw() {
       svg.replaceChildren();
-
-      svg.appendChild(
-        svgElement("rect", {
-          x: 8,
-          y: 8,
-          width: 344,
-          height: 234,
-          rx: 12,
-          fill: "#080f1d",
-          stroke: "#2a3954"
-        })
-      );
-
-      svg.appendChild(
-        svgElement("text", {
-          x: 43,
-          y: 20,
-          fill: "#9caec8",
-          "font-size": 9,
-          "text-anchor": "middle"
-        })
-      );
-
-      svg.appendChild(
-        svgElement("text", {
-          x: 317,
-          y: 20,
-          fill: "#9caec8",
-          "font-size": 9,
-          "text-anchor": "middle"
-        })
-      );
+      svg.appendChild(addSvg("rect", {
+        x: 8, y: 8, width: 344, height: 234, rx: 12,
+        fill: "#080f1d", stroke: "#2a3954"
+      }));
 
       colors.forEach((name, id) => {
         const startY = yFor(id);
-        const endSlot = order.indexOf(id);
-        const endY = (
-          drag && drag.id === id
-            ? drag.y
-            : yFor(endSlot)
-        );
-
+        const slot = order.indexOf(id);
+        const endY = drag && drag.id === id ? drag.y : yFor(slot);
         const color = palette[name] || "#58e0e6";
 
-        svg.appendChild(
-          svgElement("path", {
-            d: `M 43 ${startY} C 125 ${startY}, 235 ${endY}, 317 ${endY}`,
-            fill: "none",
-            stroke: color,
-            "stroke-width": 5,
-            "stroke-linecap": "round",
-            opacity: drag && drag.id !== id ? 0.72 : 1
-          })
-        );
-      });
+        svg.appendChild(addSvg("path", {
+          d: `M 43 ${startY} C 125 ${startY}, 235 ${endY}, 317 ${endY}`,
+          fill: "none", stroke: color, "stroke-width": 5,
+          "stroke-linecap": "round"
+        }));
 
-      colors.forEach((name, id) => {
-        const startY = yFor(id);
-        const endSlot = order.indexOf(id);
-        const endY = (
-          drag && drag.id === id
-            ? drag.y
-            : yFor(endSlot)
-        );
+        svg.appendChild(addSvg("circle", {
+          cx: 43, cy: startY, r: 8, fill: color,
+          stroke: "#edf4ff", "stroke-width": 1.5
+        }));
 
-        const color = palette[name] || "#58e0e6";
-
-        svg.appendChild(
-          svgElement("circle", {
-            cx: 43,
-            cy: startY,
-            r: 8,
-            fill: color,
-            stroke: "#edf4ff",
-            "stroke-width": 1.5
-          })
-        );
-
-        const endpoint = svgElement("circle", {
-          cx: 317,
-          cy: endY,
-          r: 11,
-          fill: color,
-          stroke: "#ffffff",
-          "stroke-width": 2,
-          "data-wire-id": id,
-          class: "wire-endpoint"
-        });
-
-        endpoint.style.cursor = "grab";
-        svg.appendChild(endpoint);
-
-        const label = svgElement("text", {
-          x: 60,
-          y: startY + 4,
-          fill: color,
-          "font-size": 10,
-          "font-weight": 700
-        });
-
-        label.textContent = name;
-        svg.appendChild(label);
+        svg.appendChild(addSvg("circle", {
+          cx: 317, cy: endY, r: 11, fill: color,
+          stroke: "#ffffff", "stroke-width": 2,
+          "data-wire-id": id, class: "wire-endpoint"
+        }));
       });
     }
 
     function localY(event) {
       const rect = svg.getBoundingClientRect();
-
-      return Math.max(
-        top,
-        Math.min(
-          top + step * (count - 1),
-          (event.clientY - rect.top) * 250 / rect.height
-        )
-      );
+      return Math.max(top, Math.min(
+        top + step * (colors.length - 1),
+        (event.clientY - rect.top) * 250 / rect.height
+      ));
     }
 
     svg.addEventListener("pointerdown", (event) => {
       const target = event.target.closest("[data-wire-id]");
-
       if (!target) return;
-
       event.preventDefault();
 
       drag = {
@@ -537,14 +386,13 @@
       };
 
       svg.setPointerCapture(event.pointerId);
-      drawCables();
+      draw();
     });
 
     svg.addEventListener("pointermove", (event) => {
       if (!drag) return;
-
       drag.y = localY(event);
-      drawCables();
+      draw();
     });
 
     svg.addEventListener("pointerup", (event) => {
@@ -552,100 +400,63 @@
 
       const id = drag.id;
       const oldSlot = order.indexOf(id);
-
-      const newSlot = Math.max(
-        0,
-        Math.min(
-          count - 1,
-          Math.round((localY(event) - top) / (step || 1))
-        )
-      );
+      const newSlot = Math.max(0, Math.min(
+        colors.length - 1,
+        Math.round((localY(event) - top) / (step || 1))
+      ));
 
       if (oldSlot !== newSlot) {
-        const otherId = order[newSlot];
+        const other = order[newSlot];
         order[newSlot] = id;
-        order[oldSlot] = otherId;
+        order[oldSlot] = other;
       }
 
       drag = null;
-      drawCables();
+      draw();
 
-      if (order.every((wireId, slot) => wireId === slot)) {
-        panel.appendChild(
-          el("p", "wire-success", "✓ Cabluri descurcate!")
-        );
-
+      if (order.every((wire, index) => wire === index)) {
+        panel.appendChild(el("p", "wire-success", "✓ Cabluri descurcate!"));
         sendAction({ type: "wire_solved" });
       }
     });
 
     svg.addEventListener("pointercancel", () => {
       drag = null;
-      drawCables();
+      draw();
     });
 
-    drawCables();
-
+    draw();
     panel.appendChild(svg);
-
-    panel.appendChild(
-      el(
-        "p",
-        "memory-progress",
-        "Trage capetele rotunde din partea dreaptă. Cablurile nu trebuie să se intersecteze."
-      )
-    );
+    panel.appendChild(el(
+      "p", "memory-progress",
+      "Trage capetele din dreapta până când toate culorile sunt în ordine."
+    ));
 
     area().replaceChildren(panel);
   }
 
   function renderLogic(state) {
     const box = el("div", "logic-box");
-
-    box.appendChild(
-      el(
-        "p",
-        "logic-question",
-        state.logic_question || "Rezolvă șirul numeric."
-      )
-    );
-
-    box.appendChild(
-      el(
-        "p",
-        "stage-instructions",
-        "Introdu numărul care completează șirul."
-      )
-    );
+    box.appendChild(el("p", "logic-question", state.logic_question));
+    box.appendChild(el(
+      "p", "stage-instructions", "Introdu numărul care completează șirul."
+    ));
 
     const form = el("form", "answer-form");
-    const input = el("input", "", "");
-
+    const input = el("input");
     input.type = "number";
-    input.inputMode = "numeric";
-    input.placeholder = "Răspuns numeric";
     input.required = true;
+    input.placeholder = "Răspuns numeric";
     input.setAttribute("aria-label", "Răspuns numeric");
 
-    form.appendChild(input);
-
-    const submit = el(
-      "button",
-      "primary-button",
-      "Verifică răspunsul"
-    );
-
+    const submit = el("button", "primary-button", "Verifică răspunsul");
     submit.type = "submit";
-    form.appendChild(submit);
 
+    form.append(input, submit);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
-
-      if (input.value.trim() !== "") {
-        sendAction({
-          type: "logic_submit",
-          answer: input.value
-        });
+      if (input.value.trim()) {
+        sendAction({ type: "logic_submit", answer: input.value });
       }
     });
 
@@ -654,199 +465,181 @@
   }
 
   function pipeSymbol(tile) {
-    return tile.kind === "straight"
-      ? (tile.rotation % 2 === 0 ? "│" : "─")
-      : ["└", "┌", "┐", "┘"][tile.rotation % 4];
+    if (tile.kind === "straight") {
+      return tile.rotation % 2 === 0 ? "│" : "─";
+    }
+    return ["└", "┌", "┐", "┘"][tile.rotation % 4];
   }
 
   function renderCircuit(state) {
     const wrap = el("div", "circuit-wrap");
-
-    wrap.appendChild(
-      el(
-        "p",
-        "stage-instructions",
-        "Rotește piesele de conductă până când creezi un traseu continuu între sursa de energie din stânga și ieșirea din dreapta-jos."
-      )
-    );
+    wrap.appendChild(el(
+      "p", "stage-instructions",
+      "Rotește piesele până creezi un traseu continuu între sursă și ieșire."
+    ));
 
     const legend = el("div", "circuit-legend");
-
     legend.appendChild(el("span", "source-label", "⚡ SURSA"));
     legend.appendChild(el("span", "exit-label", "◎ IEȘIRE"));
-
     wrap.appendChild(legend);
 
     const grid = el("div", "circuit-grid");
 
     (state.circuit || []).forEach((tile, index) => {
-      const b = button(
-        pipeSymbol(tile),
-        "circuit-tile",
-        () => sendAction({
-          type: "circuit_rotate",
-          index
-        }),
+      const node = button(
+        pipeSymbol(tile), "circuit-tile",
+        () => sendAction({ type: "circuit_rotate", index }),
         { "aria-label": `Rotește piesa ${index + 1}` }
       );
 
-      if (index === 0) b.classList.add("source");
-      if (index === 15) b.classList.add("exit");
+      if (index === 0) node.classList.add("source");
+      if (index === 15) node.classList.add("exit");
 
-      if ([0, 1, 2, 6, 10, 11, 15].includes(index)) {
-        b.classList.add("route-candidate");
-      }
-
-      b.title = index === 0
-        ? "Sursă: conectează conducta spre dreapta"
-        : index === 15
-          ? "Ieșire: conectează conducta dinspre sus spre dreapta"
-          : `Rotește piesa ${index + 1}`;
-
-      grid.appendChild(b);
+      grid.appendChild(node);
     });
 
     wrap.appendChild(grid);
-
-    wrap.appendChild(
-      el(
-        "p",
-        "circuit-caption",
-        "Apasă pe orice piesă pentru a o roti cu 90°. Conductele trebuie să formeze o cale neîntreruptă."
-      )
-    );
+    wrap.appendChild(el(
+      "p", "circuit-caption",
+      "Apasă pe o piesă pentru a o roti cu 90°."
+    ));
 
     area().replaceChildren(wrap);
   }
 
   function renderVictory(state) {
     const box = el("div", "victory");
-
     box.appendChild(el("div", "victory-icon", "✦"));
     box.appendChild(el("h3", "", "Misiune îndeplinită!"));
-
-    box.appendChild(
-      el(
-        "p",
-        "",
-        state.feedback || "Ai reușit să evadezi de pe navă."
-      )
-    );
-
-    box.appendChild(
-      el(
-        "p",
-        "",
-        `Provocări reușite: ${state.successes} · Greșeli: ${state.mistakes} · Indicii: ${state.hints}`
-      )
-    );
-
-    box.appendChild(
-      button(
-        "Joacă din nou",
-        "primary-button",
-        () => sendAction({ type: "restart" })
-      )
-    );
-
+    box.appendChild(el(
+      "p", "", state.feedback || "Ai reușit să evadezi de pe navă."
+    ));
+    box.appendChild(el(
+      "p", "",
+      `Etape: ${state.successes} · Greșeli: ${state.mistakes} · Indicii: ${state.hints}`
+    ));
+    box.appendChild(button(
+      "Joacă din nou", "primary-button",
+      () => sendAction({ type: "restart" })
+    ));
     area().replaceChildren(box);
   }
 
   function render(state) {
-    if (
-      !state ||
-      typeof state !== "object" ||
-      !Number.isFinite(Number(state.stage))
-    ) {
-      throw new Error(
-        "Răspunsul serverului nu are formatul așteptat."
-      );
+    if (!state || typeof state !== "object") {
+      throw new Error("Răspuns invalid de la server.");
+    }
+
+    if (state.needs_name) {
+      currentState = null;
+      renderNameScreen();
+      return;
     }
 
     currentState = state;
+    $("stats-panel").hidden = false;
+    $("hint-button").hidden = false;
+    $("restart-button").hidden = false;
 
     $("stage-number").textContent =
-      Number(state.stage) <= 6
-        ? `${state.stage} / 6`
-        : "6 / 6";
-
-    $("difficulty").textContent =
-      state.difficulty_name ||
-      ({ 1: "Ușor", 2: "Mediu", 3: "Dificil" }[state.difficulty] || "Mediu");
-
+      state.stage <= 6 ? `${state.stage} / 6` : "6 / 6";
+    $("difficulty").textContent = state.difficulty_name || "Mediu";
     $("mistakes").textContent = state.mistakes ?? 0;
     $("hints").textContent = state.hints ?? 0;
-
     $("stage-label").textContent =
-      Number(state.stage) <= 6
+      state.stage <= 6
         ? `ETAPA ${String(state.stage).padStart(2, "0")}`
         : "MISIUNE FINALIZATĂ";
-
     $("stage-name").textContent = state.stage_name || "RoboScape";
     $("feedback").textContent = state.feedback || "Continuă misiunea.";
 
-    if (state.status === "won" || Number(state.stage) > 6) {
-      return renderVictory(state);
+    if (state.status === "won" || state.stage > 6) {
+      renderVictory(state);
+      return;
     }
 
     switch (Number(state.stage)) {
-      case 1:
-        renderMaze(state, false);
-        break;
-      case 2:
-        renderBomb(state);
-        break;
-      case 3:
-        renderWires(state);
-        break;
-      case 4:
-        renderMaze(state, true);
-        break;
-      case 5:
-        renderLogic(state);
-        break;
-      case 6:
-        renderCircuit(state);
-        break;
+      case 1: renderMaze(state); break;
+      case 2: renderBomb(state); break;
+      case 3: renderWires(state); break;
+      case 4: renderMaze(state, true); break;
+      case 5: renderLogic(state); break;
+      case 6: renderCircuit(state); break;
       default:
-        area().replaceChildren(
-          el("p", "loading-error", "Etapa jocului nu este recunoscută.")
-        );
+        area().replaceChildren(el(
+          "p", "loading-error", "Etapa nu este recunoscută."
+        ));
     }
   }
 
-  function sameBombView(a, b) {
-    return (
-      a &&
-      b &&
-      Number(a.stage) === 2 &&
-      Number(b.stage) === 2 &&
-      a.bomb_phase === b.bomb_phase &&
-      JSON.stringify(a.bomb_sequence || []) ===
-        JSON.stringify(b.bomb_sequence || []) &&
-      JSON.stringify(a.bomb_input || []) ===
-        JSON.stringify(b.bomb_input || []) &&
-      a.feedback === b.feedback &&
-      a.status === b.status
-    );
+  async function loadLeaderboard() {
+    try {
+      const entries = await api("/leaderboard");
+      const list = $("leaderboard-list");
+      list.replaceChildren();
+
+      $("leaderboard-status").textContent = entries.length
+        ? "Cel mai bun rezultat al fiecărui nume."
+        : "Încă nu există rezultate înregistrate.";
+
+      entries.forEach((entry, index) => {
+        const item = el("li", "leaderboard-item");
+        item.appendChild(el("span", "leaderboard-rank", `#${index + 1}`));
+
+        const info = el("span", "leaderboard-player");
+        info.appendChild(el("strong", "", entry.name));
+        info.appendChild(el(
+          "small", "",
+          entry.completed ? "Misiune completată" : `Etape: ${entry.stages}/6`
+        ));
+
+        item.appendChild(info);
+        item.appendChild(el(
+          "span", "leaderboard-score",
+          `${entry.stages}/6 · ${entry.mistakes} greșeli · ${entry.seconds}s`
+        ));
+
+        list.appendChild(item);
+      });
+    } catch (error) {
+      $("leaderboard-status").textContent =
+        "Clasamentul nu este disponibil momentan.";
+    }
+
+    try {
+      const status = await api("/ml-status");
+      $("ml-status").textContent = status.trained_on_real_data
+        ? `Antrenat pe ${status.samples} sesiuni. ${status.message}`
+        : status.message;
+    } catch (_) {
+      $("ml-status").textContent = "Starea modelului nu este disponibilă.";
+    }
   }
 
   async function refreshState() {
     if (loading || busy) return;
-
     loading = true;
 
     try {
-      const state = await getState();
+      const state = await api("/state");
 
-      if (sameBombView(currentState, state)) {
+      if (
+        currentState &&
+        state.stage === 2 &&
+        currentState.stage === 2 &&
+        state.bomb_phase === currentState.bomb_phase &&
+        JSON.stringify(state.bomb_sequence) ===
+          JSON.stringify(currentState.bomb_sequence) &&
+        JSON.stringify(state.bomb_input) ===
+          JSON.stringify(currentState.bomb_input)
+      ) {
         currentState = state;
         updateBombTimer(state);
       } else {
         render(state);
       }
     } catch (error) {
-      showError(error);
+      console.error(error);
     } finally {
       loading = false;
     }
@@ -856,75 +649,55 @@
     if (pollTimer) clearInterval(pollTimer);
 
     pollTimer = setInterval(() => {
-      if (
-        currentState &&
-        Number(currentState.stage) === 2 &&
-        !busy
-      ) {
-        refreshState();
-      }
-
-      if (
-        currentState &&
-        Number(currentState.stage) === 2
-      ) {
+      if (currentState && currentState.stage === 2) {
         updateBombTimer(currentState);
+        refreshState();
       }
     }, 500);
   }
 
   document.addEventListener("DOMContentLoaded", async () => {
-    $("hint-button").addEventListener("click", () => {
-      sendAction({ type: "hint" });
-    });
+    $("hint-button").addEventListener(
+      "click", () => sendAction({ type: "hint" })
+    );
 
-    $("restart-button").addEventListener("click", () => {
-      sendAction({ type: "restart" });
-    });
+    $("restart-button").addEventListener(
+      "click", () => sendAction({ type: "restart" })
+    );
+
+    $("refresh-leaderboard").addEventListener("click", loadLeaderboard);
 
     document.addEventListener("keydown", (event) => {
       if (event.target instanceof HTMLInputElement) return;
 
-      const dirs = {
-        ArrowUp: "up",
-        ArrowDown: "down",
-        ArrowLeft: "left",
-        ArrowRight: "right"
+      const directions = {
+        ArrowUp: "up", ArrowDown: "down",
+        ArrowLeft: "left", ArrowRight: "right"
       };
 
-      const direction = dirs[event.key];
-
+      const direction = directions[event.key];
       if (!direction || !currentState || busy) return;
 
-      if (Number(currentState.stage) === 1) {
+      if (currentState.stage === 1) {
         event.preventDefault();
-        sendAction({
-          type: "maze_move",
-          direction
-        });
-      } else if (Number(currentState.stage) === 4) {
+        sendAction({ type: "maze_move", direction });
+      } else if (currentState.stage === 4) {
         event.preventDefault();
-        sendAction({
-          type: "grid_move",
-          direction
-        });
+        sendAction({ type: "grid_move", direction });
       }
     });
 
     try {
-      render(await getState());
+      render(await api("/state"));
     } catch (error) {
       showError(error);
-
-      $("game-area").replaceChildren(
-        el(
-          "div",
-          "loading-error",
-          "Misiunea nu s-a putut încărca. Reîncarcă pagina; dacă problema persistă, verifică logurile serverului."
-        )
-      );
+      area().replaceChildren(el(
+        "p", "loading-error",
+        "Nu am putut încărca jocul. Verifică logurile serverului."
+      ));
     }
 
+    loadLeaderboard();
     startPolling();
   });
 })();
