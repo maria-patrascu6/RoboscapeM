@@ -3,80 +3,93 @@ import csv
 import os
 from pathlib import Path
 
-import numpy as np
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.tree import DecisionTreeClassifier
+
 
 DATA_DIR = Path(
     os.environ.get("ROBOSCAPE_DATA_DIR", "/tmp/roboscape_data")
 )
 CSV_PATH = DATA_DIR / "game_sessions.csv"
 
-MODEL = None
-MODEL_MTIME = None
-SAMPLE_COUNT = 0
-MODEL_MESSAGE = "Modelul folosește momentan regula inițială."
+FEATURES = [
+    "mistakes",
+    "hints",
+    "stages_completed",
+    "duration_seconds",
+    "last_stage",
+]
+
+_model = None
+_model_signature = None
 
 
-def train_if_needed():
-    global MODEL, MODEL_MTIME, SAMPLE_COUNT, MODEL_MESSAGE
+def read_training_data():
+    if not CSV_PATH.exists():
+        return [], []
 
-    try:
-        mtime = CSV_PATH.stat().st_mtime if CSV_PATH.exists() else None
-    except OSError:
-        mtime = None
-
-    if mtime == MODEL_MTIME:
-        return
-
-    MODEL_MTIME = mtime
-    MODEL = None
     X = []
     y = []
 
-    if CSV_PATH.exists():
-        try:
-            with CSV_PATH.open("r", newline="", encoding="utf-8-sig") as f:
-                for row in csv.DictReader(f):
-                    try:
-                        features = [
-                            float(row.get("last_stage") or 1),
-                            float(row.get("stages_completed") or 0),
-                            float(row.get("mistakes") or 0),
-                            float(row.get("hints") or 0),
-                            float(row.get("duration_seconds") or 0),
-                            float(row.get("final_difficulty") or 2),
-                        ]
-                    except (ValueError, TypeError):
+    try:
+        with CSV_PATH.open(
+            "r", newline="", encoding="utf-8-sig"
+        ) as file:
+            reader = csv.DictReader(file)
+
+            for row in reader:
+                try:
+                    label = row.get("final_difficulty", "").strip()
+
+                    if label not in ("easy", "normal", "hard"):
                         continue
 
-                    status = (row.get("final_status") or "").strip()
-
-                    if status not in ("completed", "restarted"):
-                        continue
+                    features = [
+                        float(row.get("mistakes") or 0),
+                        float(row.get("hints") or 0),
+                        float(row.get("stages_completed") or 0),
+                        float(row.get("duration_seconds") or 0),
+                        float(row.get("last_stage") or 1),
+                    ]
 
                     X.append(features)
-                    y.append(1 if status == "completed" else 0)
+                    y.append(label)
 
-        except (OSError, csv.Error):
-            pass
+                except (ValueError, TypeError):
+                    continue
 
-    SAMPLE_COUNT = len(y)
+    except (OSError, csv.Error):
+        return [], []
 
-    if len(y) >= 12 and len(set(y)) == 2:
-        MODEL = RandomForestClassifier(
-            n_estimators=100,
-            max_depth=5,
+    return X, y
+
+
+def train_model():
+    global _model, _model_signature
+
+    X, y = read_training_data()
+
+    if len(X) < 12 or len(set(y)) < 2:
+        _model = None
+        _model_signature = None
+        return False
+
+    try:
+        model = DecisionTreeClassifier(
+            max_depth=4,
             min_samples_leaf=2,
-            class_weight="balanced",
             random_state=42,
         )
-        MODEL.fit(np.asarray(X), np.asarray(y))
-        MODEL_MESSAGE = f"Model antrenat pe {len(y)} sesiuni."
-    else:
-        MODEL_MESSAGE = (
-            f"Există {len(y)} sesiuni utilizabile. "
-            "Sunt necesare cel puțin 12 sesiuni și ambele tipuri de rezultat."
-        )
+        model.fit(X, y)
+
+        _model = model
+        _model_signature = len(X)
+
+        return True
+
+    except Exception:
+        _model = None
+        _model_signature = None
+        return False
 
 
 def predict_difficulty(
@@ -85,46 +98,71 @@ def predict_difficulty(
     successes,
     stage=1,
     elapsed_seconds=0,
-    current_difficulty=2,
+    current_difficulty="normal",
 ):
-    train_if_needed()
+    global _model, _model_signature
 
-    features = [[
-        max(1, min(int(stage), 6)),
-        max(0, int(successes)),
-        max(0, int(mistakes)),
-        max(0, int(hints)),
-        max(0, int(elapsed_seconds)),
-        max(1, min(int(current_difficulty), 3)),
-    ]]
+    X, y = read_training_data()
 
-    if MODEL is not None:
-        probabilities = MODEL.predict_proba(features)[0]
-        classes = list(MODEL.classes_)
-        probability = float(probabilities[classes.index(1)])
+    if len(X) >= 12 and len(set(y)) >= 2:
+        if _model is None or _model_signature != len(X):
+            train_model()
 
-        if probability >= 0.70:
-            return 3
-        if probability <= 0.40:
-            return 1
-        return 2
+    if _model is not None:
+        try:
+            features = [[
+                float(mistakes),
+                float(hints),
+                float(successes),
+                float(elapsed_seconds),
+                float(stage),
+            ]]
 
+            prediction = _model.predict(features)[0]
+
+            if prediction in ("easy", "normal", "hard"):
+                return prediction
+
+        except Exception:
+            pass
+
+    # Regulă de rezervă: funcționează și fără date de antrenare.
     pressure = int(mistakes) + int(hints)
 
     if pressure >= 5:
-        return 1
+        return "easy"
 
-    if pressure <= 1 and int(successes) >= 2:
-        return 3
+    if pressure <= 1 and int(stage) >= 4:
+        return "hard"
 
-    return 2
+    if current_difficulty in ("easy", "normal", "hard"):
+        return current_difficulty
+
+    return "normal"
 
 
 def model_status():
-    train_if_needed()
+    X, y = read_training_data()
+
+    if len(X) >= 12 and len(set(y)) >= 2:
+        if _model is None or _model_signature != len(X):
+            train_model()
+
+    if _model is not None:
+        return {
+            "trained": True,
+            "message": (
+                "Model ML antrenat pe "
+                + str(len(X))
+                + " sesiuni înregistrate."
+            ),
+        }
 
     return {
-        "trained_on_real_data": MODEL is not None,
-        "samples": SAMPLE_COUNT,
-        "message": MODEL_MESSAGE,
+        "trained": False,
+        "message": (
+            "Mod adaptiv activ. Pentru antrenarea modelului ML "
+            "sunt necesare cel puțin 12 sesiuni valide și "
+            "minimum două niveluri de dificultate în date."
+        ),
     }
