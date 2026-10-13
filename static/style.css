@@ -3,7 +3,6 @@
   color-scheme: dark;
   --bg: #080d19;
   --panel: #111a2b;
-  --panel2: #172238;
   --line: #2a3954;
   --text: #edf4ff;
   --muted: #9caec8;
@@ -25,7 +24,7 @@ body {
     radial-gradient(ellipse at 50% -20%, #1a2d4a 0, transparent 58%),
     var(--bg);
   color: var(--text);
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
   font-size: 15px;
 }
 
@@ -36,7 +35,7 @@ body {
   gap: 12px;
   padding: 12px max(18px, calc((100vw - 1060px) / 2));
   border-bottom: 1px solid #26334a;
-  background: #080d19d9;
+  background: #080d19e8;
 }
 
 .brand {
@@ -165,10 +164,6 @@ body {
   min-height: 38px;
 }
 
-.feedback:empty {
-  display: none;
-}
-
 #game-area {
   min-width: 0;
 }
@@ -214,9 +209,7 @@ button:disabled {
 .action-button,
 .wire-button,
 .symbol-button,
-.color-button,
-.maze-control,
-.grid-control {
+.maze-control {
   border: 1px solid var(--line);
   border-radius: 9px;
   padding: 8px 12px;
@@ -229,9 +222,7 @@ button:disabled {
 .action-button:hover,
 .wire-button:hover,
 .symbol-button:hover,
-.color-button:hover,
-.maze-control:hover,
-.grid-control:hover {
+.maze-control:hover {
   border-color: var(--cyan);
 }
 
@@ -332,6 +323,8 @@ button:disabled {
   font-size: .8rem;
 }
 
+/* Bomba și secvența de memorat */
+
 .bomb-panel {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -339,17 +332,119 @@ button:disabled {
   align-items: center;
 }
 
-.bomb-display {
+.bomb-illustration {
+  position: relative;
+  width: min(100%, 300px);
+  height: 138px;
+  margin: 12px auto 8px;
   display: flex;
   align-items: center;
   justify-content: center;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: radial-gradient(ellipse at center, #202b46 0, #0a1120 72%);
+}
+
+.bomb-shell {
+  position: relative;
+  z-index: 2;
+  width: 112px;
+  height: 100px;
+  border: 3px solid #5c6b83;
+  border-radius: 42% 42% 35% 35%;
+  background: linear-gradient(145deg, #3c4a60, #141d2c 65%);
+  box-shadow: inset -8px -8px 15px #0006, 0 8px 20px #0005;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+.bomb-fuse {
+  position: absolute;
+  top: 10px;
+  left: calc(50% - 4px);
+  width: 8px;
+  height: 28px;
+  border-radius: 5px;
+  background: #8d9aae;
+  transform: rotate(15deg);
+  z-index: 1;
+}
+
+.bomb-fuse::after {
+  content: "";
+  position: absolute;
+  right: -8px;
+  top: -5px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #ffb45e;
+  box-shadow: 0 0 15px #ff7b43;
+}
+
+.bomb-wire {
+  position: absolute;
+  width: 80px;
+  height: 4px;
+  border-radius: 5px;
+  z-index: 3;
+  top: 73px;
+}
+
+.bomb-wire-red {
+  background: var(--red);
+  transform: rotate(22deg);
+  left: calc(50% - 105px);
+}
+
+.bomb-wire-blue {
+  background: #58a9ff;
+  transform: rotate(-25deg);
+  right: calc(50% - 105px);
+}
+
+.bomb-light {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--red);
+  box-shadow: 0 0 12px var(--red);
+}
+
+.bomb-label {
+  font-size: .58rem;
+  letter-spacing: .16em;
+  font-weight: 900;
+  color: #dce7f7;
+}
+
+.bomb-display-small {
+  padding: 3px 8px;
+  border: 1px solid #4b6b73;
+  border-radius: 4px;
+  background: #071317;
+  color: #72f4c4;
+  font-size: .68rem;
+  font-weight: 900;
+  letter-spacing: .14em;
+}
+
+.bomb-display {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
   gap: 10px;
-  min-height: 100px;
+  min-height: 68px;
   padding: 12px;
   border: 1px solid #3b426b;
   border-radius: 13px;
   background: radial-gradient(circle, #26284a, #101628);
-  font-size: 2rem;
+  font-size: 1.7rem;
   letter-spacing: .1em;
 }
 
@@ -385,6 +480,8 @@ button:disabled {
   text-align: center;
 }
 
+/* Cablurile care trebuie descurcate */
+
 .wire-panel {
   max-width: 540px;
   margin: 0 auto;
@@ -394,20 +491,33 @@ button:disabled {
   background: #0b1322;
 }
 
-.wire-panel svg {
+.tangled-cables {
   display: block;
   width: 100%;
-  max-height: 200px;
+  max-width: 620px;
+  height: auto;
+  margin: 10px auto;
+  touch-action: none;
+  user-select: none;
 }
 
-.wire-button {
-  min-width: 95px;
+.tangled-cables .wire-endpoint {
+  touch-action: none;
+  cursor: grab;
 }
 
-.wire-button.done {
-  border-color: var(--green);
-  background: #15372f;
+.tangled-cables .wire-endpoint:active {
+  cursor: grabbing;
 }
+
+.wire-success {
+  text-align: center;
+  color: var(--green);
+  font-weight: 800;
+  margin: 8px 0;
+}
+
+/* Grila de securitate */
 
 .security-grid {
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -424,6 +534,8 @@ button:disabled {
 .grid-controls button {
   min-height: 36px;
 }
+
+/* Terminal logic */
 
 .logic-box {
   max-width: 580px;
@@ -455,6 +567,8 @@ button:disabled {
   border-radius: 9px;
 }
 
+/* Circuitul de evacuare */
+
 .circuit-wrap {
   max-width: 400px;
   margin: 0 auto;
@@ -463,6 +577,7 @@ button:disabled {
 .circuit-grid {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   max-width: 340px;
+  gap: 5px;
 }
 
 .circuit-tile {
@@ -470,25 +585,55 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: center;
+  min-width: 0;
   aspect-ratio: 1;
+  padding: 0;
   border: 1px solid #35435b;
   border-radius: 8px;
-  background: #152239;
-  font-size: 1.9rem;
+  background: linear-gradient(145deg, #1c2b43, #101a2b);
+  box-shadow: inset 0 0 0 1px #ffffff05;
+  font-size: clamp(1.45rem, 4vw, 2rem);
   color: var(--cyan);
   font-weight: 800;
 }
 
 .circuit-tile:hover {
-  background: #213451;
+  border-color: var(--cyan);
+  background: #233650;
 }
 
 .circuit-tile.source {
+  background: #15352e;
   border-color: var(--green);
 }
 
 .circuit-tile.exit {
+  background: #292144;
   border-color: var(--purple);
+}
+
+.circuit-tile.route-candidate {
+  box-shadow: inset 0 0 0 1px #58e0e620;
+}
+
+.circuit-legend {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  max-width: 340px;
+  margin: 10px auto 0;
+  font-size: .7rem;
+  font-weight: 900;
+  letter-spacing: .1em;
+}
+
+.source-label {
+  color: var(--green);
+}
+
+.exit-label {
+  color: var(--purple);
 }
 
 .circuit-caption {
@@ -496,6 +641,8 @@ button:disabled {
   color: var(--muted);
   font-size: .8rem;
 }
+
+/* Finalul jocului */
 
 .victory {
   text-align: center;
@@ -539,31 +686,6 @@ button:disabled {
   border-radius: 99px;
   color: var(--muted);
   font-size: .75rem;
-}
-
-.wire-target {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  align-items: center;
-  gap: 6px;
-  margin: 10px 0;
-}
-
-.wire-target p {
-  width: 100%;
-  margin: 0 0 2px;
-  text-align: center;
-  color: var(--muted);
-  font-size: .8rem;
-}
-
-.wire-target-chip {
-  padding: 5px 8px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #121c2e;
-  font-size: .78rem;
 }
 
 @media (min-width: 900px) {
@@ -625,9 +747,30 @@ button:disabled {
     margin: 4px 0;
   }
 
+  .bomb-illustration {
+    height: 120px;
+  }
+
+  .bomb-shell {
+    width: 96px;
+    height: 86px;
+  }
+
+  .bomb-wire {
+    top: 66px;
+  }
+
   .bomb-display {
     min-height: 78px;
     font-size: 1.6rem;
+  }
+
+  .tangled-cables {
+    max-height: 58vh;
+  }
+
+  .circuit-grid {
+    max-width: 310px;
   }
 
   .panel-actions button {
