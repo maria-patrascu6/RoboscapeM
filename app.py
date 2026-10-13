@@ -1,239 +1,284 @@
 
 import csv
 import os
+import random
 import time
-import uuid
-from pathlib import Path
 
-from flask import Flask, jsonify, render_template, request, session, send_file
+from flask import Flask, jsonify, render_template, request, session
 
-from main import new_game, public_state, handle_action
-from ml_model import model_status
+from ml_model import difficulty_model, difficulty_name
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "roboscape-development-key")
+app.secret_key = os.environ.get("SECRET_KEY", "roboscape-local-key")
 
-DATA_DIR = Path(os.environ.get("ROBOSCAPE_DATA_DIR", "/tmp/roboscape_data"))
-CSV_PATH = DATA_DIR / "game_sessions.csv"
+DATA_FILE = "results.csv"
 
-FIELDS = [
-    "session_id",
-    "player_name",
-    "started_at",
-    "ended_at",
-    "duration_seconds",
-    "final_status",
-    "last_stage",
-    "stages_completed",
-    "mistakes",
-    "hints",
-    "final_difficulty",
+STAGES = [
+    "Labirintul",
+    "Memoria bombei",
+    "Cablurile",
+    "Grila de securitate",
+    "Puzzle logic",
+    "Circuitul electric"
 ]
 
-
-def ensure_csv():
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-    if not CSV_PATH.exists() or CSV_PATH.stat().st_size == 0:
-        with CSV_PATH.open("w", newline="", encoding="utf-8-sig") as file:
-            writer = csv.DictWriter(file, fieldnames=FIELDS)
-            writer.writeheader()
-        return
-
-    with CSV_PATH.open("r", newline="", encoding="utf-8-sig") as file:
-        reader = csv.DictReader(file)
-        old_fields = reader.fieldnames or []
-        rows = list(reader)
-
-    if old_fields != FIELDS:
-        with CSV_PATH.open("w", newline="", encoding="utf-8-sig") as file:
-            writer = csv.DictWriter(file, fieldnames=FIELDS)
-            writer.writeheader()
-
-            for row in rows:
-                writer.writerow({
-                    field: row.get(field, "")
-                    for field in FIELDS
-                })
-
-
-def get_game():
-    game = session.get("game")
-
-    if not game:
-        return None
-
-    return game
-
-
-def log_session(game, status):
-    if game.get("_session_logged"):
-        return
-
-    ensure_csv()
-
-    started = game.get("started_timestamp", time.time())
-    duration = max(0, int(time.time() - started))
-
-    row = {
-        "session_id": game.get("session_id", ""),
-        "player_name": game.get("player_name", "Jucător"),
-        "started_at": game.get("started_at", ""),
-        "ended_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "duration_seconds": duration,
-        "final_status": status,
-        "last_stage": min(game.get("stage", 1), 6),
-        "stages_completed": game.get("successes", 0),
-        "mistakes": game.get("mistakes", 0),
-        "hints": game.get("hints", 0),
-        "final_difficulty": game.get("difficulty", "normal"),
+# Fiecare jucător primește propria stare de joc.
+# Pentru un prototip local este suficientă sesiunea Flask.
+def initial_state(name):
+    return {
+        "name": name,
+        "stage": 0,
+        "status": "playing",
+        "difficulty": 1,
+        "mistakes": 0,
+        "started_at": time.time(),
+        "stage_started_at": time.time(),
+        "total_time": 0,
+        "stage_results": [],
+        "challenge": make_challenge(0, 1)
     }
 
-    with CSV_PATH.open("a", newline="", encoding="utf-8-sig") as file:
-        writer = csv.DictWriter(file, fieldnames=FIELDS)
-        writer.writerow(row)
 
-    game["_session_logged"] = True
+def make_challenge(stage, difficulty):
+    if stage == 0:
+        size = 5 if difficulty == 0 else 7 if difficulty == 1 else 9
+        return {
+            "type": "maze",
+            "size": size,
+            "description": "Ajută robotul să ajungă la ieșire."
+        }
+
+    if stage == 1:
+        shapes = ["▲", "●", "■", "◆", "★", "⬟"]
+        random.shuffle(shapes)
+        return {
+            "type": "memory",
+            "shapes": shapes,
+            "description": "Memorează cele 6 simboluri, apoi introdu-le în ordine."
+        }
+
+    if stage == 2:
+        wires = ["roșu", "albastru", "verde", "galben"]
+        shuffled = wires[:]
+        random.shuffle(shuffled)
+        return {
+            "type": "wires",
+            "wires": shuffled,
+            "targets": wires,
+            "description": "Trage fiecare cablu la poziția cu aceeași culoare."
+        }
+
+    if stage == 3:
+        size = 3 if difficulty == 0 else 4 if difficulty == 1 else 5
+        numbers = list(range(1, size * size + 1))
+        random.shuffle(numbers)
+        return {
+            "type": "grid",
+            "size": size,
+            "numbers": numbers,
+            "description": "Selectează numerele în ordine crescătoare."
+        }
+
+    if stage == 4:
+        a = random.randint(2, 8)
+        b = random.randint(2, 8)
+        return {
+            "type": "logic",
+            "question": f"Cât face {a} × {b} + {a}?",
+            "answer": a * b + a,
+            "description": "Rezolvă puzzle-ul logic."
+        }
+
+    return {
+        "type": "circuit",
+        "sequence": [1, 2, 3, 4],
+        "description": "Activează componentele în ordinea corectă."
+    }
 
 
-@app.get("/")
+def public_state():
+    state = session.get("game")
+    if not state:
+        return {"status": "not_started"}
+
+    challenge = dict(state["challenge"])
+
+    # Nu trimitem soluția puzzle-ului logic către browser.
+    challenge.pop("answer", None)
+
+    return {
+        "name": state["name"],
+        "stage": state["stage"],
+        "stage_number": state["stage"] + 1,
+        "stage_name": STAGES[state["stage"]]
+            if state["stage"] < len(STAGES) else "Finalizat",
+        "status": state["status"],
+        "difficulty": state["difficulty"],
+        "difficulty_name": difficulty_name(state["difficulty"]),
+        "mistakes": state["mistakes"],
+        "challenge": challenge,
+        "stages_total": len(STAGES),
+        "stage_results": state["stage_results"]
+    }
+
+
+def save_result(state):
+    exists = os.path.exists(DATA_FILE)
+
+    with open(DATA_FILE, "a", newline="", encoding="utf-8") as file:
+        writer = csv.writer(file)
+
+        if not exists:
+            writer.writerow([
+                "name", "stages_completed", "time_seconds", "mistakes"
+            ])
+
+        writer.writerow([
+            state["name"],
+            len(state["stage_results"]),
+            round(state["total_time"], 2),
+            state["mistakes"]
+        ])
+
+
+@app.route("/")
 def index():
     return render_template("index.html")
 
 
-@app.post("/start")
+@app.route("/ml-status")
+def ml_status():
+    return jsonify({
+        "model_trained": difficulty_model.trained,
+        "training_examples": len(difficulty_model.X)
+    })
+
+
+@app.route("/start", methods=["POST"])
 def start():
     data = request.get_json(silent=True) or {}
-    name = str(data.get("name", "")).strip()
+    name = str(data.get("name", "")).strip()[:30]
 
     if not name:
-        return jsonify({"error": "Introdu un nume pentru a începe."}), 400
+        return jsonify({"error": "Introdu un nume înainte să începi."}), 400
 
-    name = name[:30]
-
-    game = new_game(name)
-    session.clear()
-    session["player_name"] = name
-    session["game"] = game
+    session["game"] = initial_state(name)
     session.modified = True
 
-    return jsonify(public_state(game))
+    return jsonify(public_state())
 
 
-
-@app.get("/state")
+@app.route("/state")
 def state():
-    game = get_game()
-
-    if not game or not session.get("player_name"):
-        return jsonify({"needs_name": True})
-
-    result = public_state(game)
-
-    session["game"] = game
-    session.modified = True
-
-    result["needs_name"] = False
-    return jsonify(result)
+    return jsonify(public_state())
 
 
-
-@app.post("/action")
+@app.route("/action", methods=["POST"])
 def action():
+    state = session.get("game")
+
+    if not state:
+        return jsonify({"error": "Pornește mai întâi jocul."}), 400
+
+    if state["status"] != "playing":
+        return jsonify({"error": "Jocul s-a încheiat."}), 400
+
     data = request.get_json(silent=True) or {}
     action_type = data.get("type")
+    answer = data.get("answer")
 
-    game = get_game()
+    stage = state["stage"]
+    challenge = state["challenge"]
+    success = False
 
-    if not game or not session.get("player_name"):
-        return jsonify({
-            "needs_name": True,
-            "error": "Introdu mai întâi numele jucătorului."
-        }), 400
+    if action_type == "solve":
+        if stage == 0:
+            success = answer == "exit"
 
-    if action_type == "restart":
-        if game.get("status") == "won":
-            log_session(game, "won")
-        else:
-            log_session(game, "restarted")
+        elif stage == 1:
+            success = answer == challenge["shapes"]
 
-        name = session.get("player_name", "Jucător")
-        session["game"] = new_game(name)
+        elif stage == 2:
+            success = answer == challenge["targets"]
+
+        elif stage == 3:
+            numbers = challenge["numbers"]
+            success = answer == sorted(numbers)
+
+        elif stage == 4:
+            success = str(answer).strip() == str(challenge["answer"])
+
+        elif stage == 5:
+            success = answer == challenge["sequence"]
+
+    if not success:
+        state["mistakes"] += 1
+        session["game"] = state
         session.modified = True
+        return jsonify({
+            "correct": False,
+            "message": "Nu este corect. Încearcă din nou.",
+            "state": public_state()
+        })
 
-        return jsonify(public_state(session["game"]))
+    elapsed = time.time() - state["stage_started_at"]
 
-    handle_action(game, data)
+    difficulty_model.add_result(
+        elapsed,
+        state["mistakes"],
+        True
+    )
 
-    if game.get("status") == "won":
-        log_session(game, "won")
+    state["stage_results"].append({
+        "stage": stage + 1,
+        "time": round(elapsed, 2),
+        "mistakes": state["mistakes"]
+    })
 
-    session["game"] = game
+    state["stage"] += 1
+
+    if state["stage"] >= len(STAGES):
+        state["status"] = "completed"
+        state["total_time"] = time.time() - state["started_at"]
+        save_result(state)
+    else:
+        state["difficulty"] = difficulty_model.predict(
+            elapsed,
+            state["mistakes"]
+        )
+        state["stage_started_at"] = time.time()
+        state["challenge"] = make_challenge(
+            state["stage"],
+            state["difficulty"]
+        )
+
+    session["game"] = state
     session.modified = True
 
-    return jsonify(public_state(game))
+    return jsonify({
+        "correct": True,
+        "message": "Bravo! Ai trecut etapa.",
+        "state": public_state()
+    })
 
 
-@app.get("/leaderboard")
+@app.route("/leaderboard")
 def leaderboard():
-    ensure_csv()
-    best = {}
+    results = []
 
-    with CSV_PATH.open("r", newline="", encoding="utf-8-sig") as file:
-        for row in csv.DictReader(file):
-            if row.get("final_status") != "won":
-                continue
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, newline="", encoding="utf-8") as file:
+            for row in csv.DictReader(file):
+                results.append(row)
 
-            name = row.get("player_name", "Jucător")
-
-            try:
-                mistakes = int(row.get("mistakes") or 0)
-                duration = int(row.get("duration_seconds") or 0)
-                completed = int(row.get("stages_completed") or 0)
-            except ValueError:
-                continue
-
-            entry = {
-                "name": name,
-                "mistakes": mistakes,
-                "duration": duration,
-                "completed": completed,
-            }
-
-            if (
-                name not in best
-                or (mistakes, duration) <
-                (best[name]["mistakes"], best[name]["duration"])
-            ):
-                best[name] = entry
-
-    results = sorted(
-        best.values(),
-        key=lambda item: (
-            -item["completed"],
-            item["mistakes"],
-            item["duration"],
-        ),
+    results.sort(
+        key=lambda row: (
+            -int(row["stages_completed"]),
+            float(row["time_seconds"])
+        )
     )
 
     return jsonify(results[:10])
-
-
-@app.get("/ml-status")
-def ml_status():
-    return jsonify(model_status())
-
-
-@app.get("/download-data")
-def download_data():
-    ensure_csv()
-
-    return send_file(
-        CSV_PATH,
-        as_attachment=True,
-        download_name="game_sessions.csv",
-        mimetype="text/csv",
-    )
 
 
 if __name__ == "__main__":
