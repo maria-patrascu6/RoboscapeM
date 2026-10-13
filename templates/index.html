@@ -3,8 +3,8 @@
 <html lang="ro">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#0b1020">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#080d18">
   <title>RoboScape | Escape Room</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <script src="{{ url_for('static', filename='game.js') }}" defer></script>
@@ -25,28 +25,16 @@
     </section>
 
     <section id="stats-panel" class="stats" hidden>
-      <div class="stat">
-        <span>ETAPĂ</span>
-        <strong id="stage-number">1 / 6</strong>
-      </div>
-      <div class="stat">
-        <span>DIFICULTATE</span>
-        <strong id="difficulty">Mediu</strong>
-      </div>
-      <div class="stat">
-        <span>GREȘELI</span>
-        <strong id="mistakes">0</strong>
-      </div>
-      <div class="stat">
-        <span>INDICII</span>
-        <strong id="hints">0</strong>
-      </div>
+      <div class="stat"><span>ETAPĂ</span><strong id="stage-number">1 / 6</strong></div>
+      <div class="stat"><span>DIFICULTATE</span><strong id="difficulty">Mediu</strong></div>
+      <div class="stat"><span>GREȘELI</span><strong id="mistakes">0</strong></div>
+      <div class="stat"><span>INDICII</span><strong id="hints">0</strong></div>
     </section>
 
-    <section id="game-panel" class="game-panel">
+    <section class="game-panel">
       <div class="panel-heading">
         <div>
-          <p class="eyebrow" id="stage-label">ETAPA 01</p>
+          <p id="stage-label" class="eyebrow">MISIUNE NOUĂ</p>
           <h2 id="stage-name">RoboScape</h2>
         </div>
         <span class="live-indicator"><span></span> ONLINE</span>
@@ -94,9 +82,7 @@
       </p>
     </section>
 
-    <p class="footer-note">
-      ROBOSCAPE · Prototip cu dificultate adaptivă
-    </p>
+    <p class="footer-note">ROBOSCAPE · Prototip cu dificultate adaptivă</p>
   </main>
 </body>
 </html>
