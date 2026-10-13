@@ -2,7 +2,6 @@
 import csv
 import os
 import time
-import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -25,9 +24,17 @@ DATA_DIR = Path(
 CSV_PATH = DATA_DIR / "game_sessions.csv"
 
 CSV_FIELDS = [
-    "session_id", "player_name", "started_at", "ended_at",
-    "duration_seconds", "final_status", "last_stage",
-    "stages_completed", "mistakes", "hints", "final_difficulty",
+    "session_id",
+    "player_name",
+    "started_at",
+    "ended_at",
+    "duration_seconds",
+    "final_status",
+    "last_stage",
+    "stages_completed",
+    "mistakes",
+    "hints",
+    "final_difficulty",
 ]
 
 
@@ -50,11 +57,13 @@ def ensure_csv():
             with CSV_PATH.open("w", newline="", encoding="utf-8") as file:
                 writer = csv.DictWriter(file, fieldnames=CSV_FIELDS)
                 writer.writeheader()
+
                 for row in rows:
                     writer.writerow({
                         field: row.get(field, "")
                         for field in CSV_FIELDS
                     })
+
     except (OSError, csv.Error) as error:
         app.logger.error("Eroare CSV: %s", error)
 
@@ -65,6 +74,7 @@ def log_session(game, status):
 
     try:
         ensure_csv()
+
         ended = time.time()
         started = float(game.get("started_at", ended))
 
@@ -134,8 +144,10 @@ def start():
             "error": "Introdu un nume sau o poreclă de cel puțin 2 caractere."
         }), 400
 
+    # Fiecare nume nou primește o misiune și un ID nou.
     session["player_name"] = name
-    game = get_game()
+
+    game = new_game()
     game["player_name"] = name
     session["game"] = game
     session.modified = True
@@ -164,17 +176,28 @@ def action():
     data = request.get_json(silent=True) or {}
 
     if data.get("type") == "restart":
-        log_session(
-            game,
-            "completed" if game.get("status") == "won" else "restarted",
+        # Salvează misiunea precedentă o singură dată.
+        status = (
+            "completed"
+            if game.get("status") == "won"
+            else "restarted"
         )
+        log_session(game, status)
+
+        # Elimină numele precedent și pregătește ecranul de start.
+        session.pop("player_name", None)
+        session["game"] = new_game()
+        session.modified = True
+
+        result = public_state(session["game"])
+        result["needs_name"] = True
+        return jsonify(result)
 
     result = handle_action(game, data)
 
     if game.get("status") == "won":
         log_session(game, "completed")
 
-    game["player_name"] = session.get("player_name", "")
     session["game"] = game
     session.modified = True
 
@@ -184,19 +207,24 @@ def action():
 
 @app.post("/restart")
 def restart():
+    # Rută alternativă pentru a reveni la formularul de nume.
     old_game = session.get("game")
 
-    if old_game:
-        log_session(
-            old_game,
-            "completed" if old_game.get("status") == "won" else "restarted",
+    if old_game and session.get("player_name"):
+        status = (
+            "completed"
+            if old_game.get("status") == "won"
+            else "restarted"
         )
+        log_session(old_game, status)
 
+    session.pop("player_name", None)
     session["game"] = new_game()
-    session["game"]["player_name"] = session.get("player_name", "")
     session.modified = True
 
-    return jsonify(public_state(session["game"]))
+    result = public_state(session["game"])
+    result["needs_name"] = True
+    return jsonify(result)
 
 
 @app.get("/leaderboard")
@@ -204,12 +232,16 @@ def leaderboard():
     best = {}
 
     for row in read_sessions():
-        name = (row.get("player_name") or "Jucător").strip() or "Jucător"
+        name = (
+            row.get("player_name") or "Jucător"
+        ).strip() or "Jucător"
 
         try:
             result = {
                 "name": name,
-                "completed": int(row.get("final_status") == "completed"),
+                "completed": int(
+                    row.get("final_status") == "completed"
+                ),
                 "stages": int(row.get("stages_completed") or 0),
                 "mistakes": int(row.get("mistakes") or 0),
                 "hints": int(row.get("hints") or 0),
@@ -219,8 +251,11 @@ def leaderboard():
             continue
 
         score = (
-            result["completed"], result["stages"],
-            -result["mistakes"], -result["hints"], -result["seconds"],
+            result["completed"],
+            result["stages"],
+            -result["mistakes"],
+            -result["hints"],
+            -result["seconds"],
         )
 
         if name not in best or score > best[name]["_score"]:
@@ -228,7 +263,9 @@ def leaderboard():
             best[name] = result
 
     ranking = sorted(
-        best.values(), key=lambda item: item["_score"], reverse=True
+        best.values(),
+        key=lambda item: item["_score"],
+        reverse=True,
     )[:20]
 
     for item in ranking:
