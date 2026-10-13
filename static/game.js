@@ -1,661 +1,601 @@
 
-(() => {
-  "use strict";
+const $ = (id) => document.getElementById(id);
 
-  let currentState = null;
-  let busy = false;
-  let polling = false;
-  let pollTimer = null;
+let currentState = null;
+let wireOrder = [];
+let wireStageKey = null;
+let selectedWire = null;
 
-  const $ = (id) => document.getElementById(id);
-  const area = () => $("game-area");
+const SYMBOLS = ["▲", "●", "■", "◆", "★", "⬟", "✚", "⬢"];
 
-  async function api(url, options = {}) {
+async function api(url, options = {}) {
     const response = await fetch(url, {
-      cache: "no-store",
-      ...options
+        ...options,
+        headers: {
+            "Content-Type": "application/json",
+            ...(options.headers || {}),
+        },
     });
 
-    const data = await response.json().catch(() => ({}));
+    const data = await response.json();
 
     if (!response.ok) {
-      throw new Error(data.error || `Eroare HTTP ${response.status}`);
+        throw new Error(data.error || "A apărut o eroare.");
     }
 
     return data;
-  }
+}
 
-  function el(tag, className = "", text = "") {
-    const node = document.createElement(tag);
-    if (className) node.className = className;
-    if (text !== undefined && text !== null) {
-      node.textContent = text;
-    }
-    return node;
-  }
-
-  function button(text, className, callback) {
-    const node = el("button", className, text);
-    node.type = "button";
-    node.addEventListener("click", callback);
-    return node;
-  }
-
-  function showError(error) {
-    console.error("RoboScape:", error);
-    $("feedback").textContent = error.message || "A apărut o eroare.";
-  }
-
-  async function sendAction(action) {
-    if (busy) return;
-
-    busy = true;
-    setButtonsDisabled(true);
-
+async function sendAction(type, extra = {}) {
     try {
-      const state = await api("/action", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(action)
-      });
+        const data = await api("/action", {
+            method: "POST",
+            body: JSON.stringify({ type, ...extra }),
+        });
 
-      render(state);
+        if (data.needs_name) {
+            showNameScreen();
+            return;
+        }
 
-      if (action.type === "restart" || state.status === "won") {
-        await loadLeaderboard();
-      }
+        renderState(data);
     } catch (error) {
-      showError(error);
-    } finally {
-      busy = false;
-      setButtonsDisabled(false);
+        showError(error.message);
     }
-  }
-
-  function setButtonsDisabled(disabled) {
-    document.querySelectorAll(
-      "#game-area button, #hint-button, #restart-button"
-    ).forEach((node) => {
-      node.disabled = disabled;
-    });
-  }
-
-  function renderNameScreen() {
-    const wrap = el("div", "name-screen");
-    wrap.appendChild(el("div", "name-robot", "🤖"));
-    wrap.appendChild(el("h3", "", "Următorul jucător"));
-    wrap.appendChild(el(
-      "p", "stage-instructions",
-      "Introdu un nume sau o poreclă pentru o misiune nouă."
-    ));
-
-    const form = el("form", "name-form");
-    const input = el("input");
-    input.type = "text";
-    input.name = "player-name";
-    input.minLength = 2;
-    input.maxLength = 30;
-    input.required = true;
-    input.autocomplete = "off";
-    input.placeholder = "Numele sau porecla";
-    input.setAttribute("aria-label", "Numele jucătorului");
-
-    const submit = el("button", "primary-button", "Începe misiunea");
-    submit.type = "submit";
-
-    const error = el("p", "name-error");
-    error.setAttribute("aria-live", "polite");
-    form.append(input, submit);
-
-    form.addEventListener("submit", async (event) => {
-      event.preventDefault();
-
-      const name = input.value.trim().replace(/\s+/g, " ");
-      if (name.length < 2) {
-        error.textContent = "Introdu cel puțin două caractere.";
-        return;
-      }
-
-      submit.disabled = true;
-
-      try {
-        const state = await api("/start", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name })
-        });
-
-        render(state);
-        await loadLeaderboard();
-      } catch (err) {
-        error.textContent = err.message;
-      } finally {
-        submit.disabled = false;
-      }
-    });
-
-    wrap.append(form, error);
-    area().replaceChildren(wrap);
-
-    $("stats-panel").hidden = true;
-    $("hint-button").hidden = true;
-    $("restart-button").hidden = true;
-    $("stage-label").textContent = "MISIUNE NOUĂ";
-    $("stage-name").textContent = "Înregistrarea jucătorului";
-    $("feedback").textContent = "Fiecare jucător începe de la zero.";
-  }
-
-  function addMoveControls(parent, type) {
-    const pad = el("div", "control-pad");
-
-    [
-      ["", ""], ["up", "↑"], ["", ""],
-      ["left", "←"], ["down", "↓"], ["right", "→"]
-    ].forEach(([direction, label]) => {
-      if (!direction) {
-        pad.appendChild(el("span", "empty"));
-      } else {
-        const b = button(label, "maze-control", () =>
-          sendAction({ type, direction })
-        );
-        b.setAttribute("aria-label", direction);
-        pad.appendChild(b);
-      }
-    });
-
-    parent.appendChild(pad);
-  }
-
-  function renderMaze(state, isGrid = false) {
-    const size = isGrid ? 5 : 7;
-    const walls = isGrid ? state.grid_walls : state.maze_walls;
-    const pos = isGrid ? state.grid_pos : state.maze_pos;
-    const wrap = el("div", "section-layout");
-    const board = el("div", isGrid ? "security-grid" : "maze");
-
-    for (let r = 0; r < size; r++) {
-      for (let c = 0; c < size; c++) {
-        const cell = el("div", isGrid ? "security-cell" : "maze-cell");
-
-        const wall = (walls || []).some(
-          (w) => w[0] === r && w[1] === c
-        ) || (isGrid && state.difficulty >= 2 && r === 3 && c === 3);
-
-        if (wall) {
-          cell.classList.add("wall");
-        } else if (pos[0] === r && pos[1] === c) {
-          cell.classList.add("player");
-          cell.textContent = "🤖";
-        } else if (r === size - 1 && c === size - 1) {
-          cell.classList.add("exit");
-          cell.textContent = "↗";
-        } else {
-          cell.textContent = "·";
-        }
-
-        board.appendChild(cell);
-      }
-    }
-
-    const controls = el("div", "stage-instructions");
-    controls.appendChild(el(
-      "p", "",
-      "Ajungi la ieșirea din colțul din dreapta-jos. Evită pereții."
-    ));
-    addMoveControls(controls, isGrid ? "grid_move" : "maze_move");
-    controls.appendChild(el("p", "maze-help", "Poți folosi tastele săgeți."));
-
-    wrap.append(board, controls);
-    area().replaceChildren(wrap);
-  }
-
-  function updateBombTimer(state) {
-    const timer = document.querySelector(".timer");
-    if (!timer || !state || state.stage !== 2) return;
-
-    const showing = state.bomb_phase === "show";
-    const deadline = showing
-      ? state.bomb_show_until
-      : state.bomb_deadline;
-
-    const seconds = Math.max(
-      0,
-      Math.ceil((Number(deadline) || 0) - Date.now() / 1000)
-    );
-
-    timer.textContent = showing
-      ? `Memorează formele: ${seconds} s`
-      : `Timp rămas: ${seconds} s`;
-
-    timer.classList.toggle("timer-warning", !showing && seconds <= 5);
-  }
-
-  function renderBomb(state) {
-    const wrap = el("div", "bomb-panel");
-    const left = el("div", "stage-instructions");
-
-    left.appendChild(el(
-      "p", "",
-      "Memorează formele de la stânga la dreapta. Apoi apasă-le în aceeași ordine."
-    ));
-
-    const illustration = el("div", "bomb-illustration");
-    const shell = el("div", "bomb-shell");
-    shell.appendChild(el("span", "bomb-light"));
-    shell.appendChild(el("span", "bomb-label", "MEMORY CORE"));
-    shell.appendChild(el(
-      "span", "bomb-display-small",
-      state.bomb_phase === "show" ? "MEM" : "INPUT"
-    ));
-    illustration.appendChild(shell);
-    left.appendChild(illustration);
-
-    const display = el("div", "bomb-display");
-
-    if (state.bomb_phase === "show") {
-      (state.bomb_sequence || []).forEach((symbol) => {
-        display.appendChild(el("span", "memory-shape", symbol));
-      });
-    } else {
-      display.textContent =
-        (state.bomb_input || []).join("  ") || "Începe secvența";
-    }
-
-    left.append(display, el("p", "timer"));
-
-    const right = el("div", "stage-instructions");
-    right.appendChild(el(
-      "p", "",
-      state.bomb_phase === "show"
-        ? "Reține toate formele înainte să dispară."
-        : "Introdu secvența fără să schimbi ordinea."
-    ));
-
-    if (state.bomb_phase === "input") {
-      const grid = el("div", "symbol-buttons");
-
-      (state.symbols || []).forEach((symbol) => {
-        grid.appendChild(button(
-          symbol,
-          "symbol-button",
-          () => sendAction({ type: "bomb_pick", symbol })
-        ));
-      });
-
-      right.appendChild(grid);
-    }
-
-    right.appendChild(el(
-      "p", "memory-progress",
-      `Forme introduse: ${(state.bomb_input || []).length} / ${
-        state.bomb_sequence?.length || "?"
-      }`
-    ));
-
-    wrap.append(left, right);
-    area().replaceChildren(wrap);
-    updateBombTimer(state);
-  }
-
-  function renderWires(state) {
-    const panel = el("div", "wire-panel");
-    panel.appendChild(el(
-      "p", "stage-instructions",
-      "Selectează două cabluri pentru a le schimba pozițiile. Pune-le în ordinea culorilor."
-    ));
-
-    const colors = state.colors || [];
-    const order = (state.wire_target || []).slice();
-    const names = {
-      Albastru: "#4ea5ff",
-      Galben: "#f5cf54",
-      Mov: "#b49aff",
-      Verde: "#58d6a0",
-      Roșu: "#ff6f83"
-    };
-
-    const list = el("div", "wire-list");
-    let selected = null;
-
-    function draw() {
-      list.replaceChildren();
-
-      order.forEach((wireId, slot) => {
-        const name = colors[wireId];
-        const b = button(
-          `${slot + 1}. ${name}`,
-          "wire-choice",
-          () => {
-            if (selected === null) {
-              selected = slot;
-            } else {
-              [order[selected], order[slot]] =
-                [order[slot], order[selected]];
-              selected = null;
-            }
-            draw();
-          }
-        );
-
-        b.style.borderLeftColor = names[name] || "#fff";
-        b.classList.toggle("selected", selected === slot);
-        list.appendChild(b);
-      });
-    }
-
-    draw();
-    panel.appendChild(list);
-    panel.appendChild(el(
-      "p", "memory-progress",
-      "Ordinea corectă este afișată prin culorile cablurilor din stânga spre dreapta."
-    ));
-
-    panel.appendChild(button(
-      "Verifică ordinea",
-      "primary-button",
-      () => {
-        if (order.every((id, index) => id === index)) {
-          sendAction({ type: "wire_solved" });
-        } else {
-          sendAction({ type: "wire_wrong" });
-        }
-      }
-    ));
-
-    area().replaceChildren(panel);
-  }
-
-  function renderLogic(state) {
-    const box = el("div", "logic-box");
-    box.appendChild(el("p", "logic-question", state.logic_question));
-    box.appendChild(el(
-      "p", "stage-instructions",
-      "Introdu numărul care completează șirul."
-    ));
-
-    const form = el("form", "answer-form");
-    const input = el("input");
-    input.type = "number";
-    input.required = true;
-    input.placeholder = "Răspuns numeric";
-    input.setAttribute("aria-label", "Răspuns numeric");
-
-    const submit = el("button", "primary-button", "Verifică răspunsul");
-    submit.type = "submit";
-    form.append(input, submit);
-
-    form.addEventListener("submit", (event) => {
-      event.preventDefault();
-      if (input.value.trim()) {
-        sendAction({ type: "logic_submit", answer: input.value });
-      }
-    });
-
-    box.appendChild(form);
-    area().replaceChildren(box);
-  }
-
-  function renderCircuit(state) {
-    const wrap = el("div", "circuit-wrap");
-    wrap.appendChild(el(
-      "p", "stage-instructions",
-      "Rotește piesele până când poți traversa circuitul de la sursă la ieșire."
-    ));
-
-    const legend = el("div", "circuit-legend");
-    legend.appendChild(el("span", "source-label", "⚡ SURSA"));
-    legend.appendChild(el("span", "exit-label", "◎ IEȘIRE"));
-    wrap.appendChild(legend);
-
-    const grid = el("div", "circuit-grid");
-    const ns = "http://www.w3.org/2000/svg";
-
-    function addSvg(parent, tag, attrs) {
-      const node = document.createElementNS(ns, tag);
-      Object.entries(attrs).forEach(([key, value]) => {
-        node.setAttribute(key, value);
-      });
-      parent.appendChild(node);
-      return node;
-    }
-
-    function ports(tile) {
-      if (tile.kind === "straight") {
-        return tile.rotation % 2 === 0 ? ["N", "S"] : ["E", "W"];
-      }
-
-      return [
-        ["N", "E"],
-        ["E", "S"],
-        ["S", "W"],
-        ["W", "N"]
-      ][tile.rotation % 4];
-    }
-
-    function drawTile(tile, index) {
-      const b = button("", "circuit-tile", () =>
-        sendAction({ type: "circuit_rotate", index })
-      );
-
-      b.setAttribute("aria-label", `Rotește piesa ${index + 1}`);
-
-      if (index === 0) b.classList.add("source");
-      if (index === 15) b.classList.add("exit");
-
-      const svg = document.createElementNS(ns, "svg");
-      svg.setAttribute("viewBox", "0 0 100 100");
-      svg.setAttribute("aria-hidden", "true");
-
-      const endpoints = {
-        N: [50, 5],
-        E: [95, 50],
-        S: [50, 95],
-        W: [5, 50]
-      };
-
-      ports(tile).forEach((port) => {
-        const [x, y] = endpoints[port];
-
-        addSvg(svg, "line", {
-          x1: 50,
-          y1: 50,
-          x2: x,
-          y2: y,
-          stroke: "#58e0e6",
-          "stroke-width": 15,
-          "stroke-linecap": "round"
-        });
-      });
-
-      addSvg(svg, "circle", {
-        cx: 50, cy: 50, r: 10, fill: "#d8faff"
-      });
-
-      b.appendChild(svg);
-      return b;
-    }
-
-    (state.circuit || []).forEach((tile, index) => {
-      grid.appendChild(drawTile(tile, index));
-    });
-
-    wrap.appendChild(grid);
-    wrap.appendChild(el(
-      "p", "circuit-caption",
-      "Apasă pe o piesă pentru a o roti cu 90°."
-    ));
-    area().replaceChildren(wrap);
-  }
-
-  function renderVictory(state) {
-    const box = el("div", "victory");
-    box.appendChild(el("div", "victory-icon", "✦"));
-    box.appendChild(el("h3", "", "Misiune îndeplinită!"));
-    box.appendChild(el(
-      "p", "",
-      state.feedback || "Ai reușit să evadezi de pe navă."
-    ));
-    box.appendChild(el(
-      "p", "",
-      `Etape: ${state.successes} · Greșeli: ${state.mistakes} · Indicii: ${state.hints}`
-    ));
-    box.appendChild(button(
-      "Următorul jucător",
-      "primary-button",
-      () => sendAction({ type: "restart" })
-    ));
-    area().replaceChildren(box);
-  }
-
-  function render(state) {
-    if (state.needs_name) {
-      currentState = null;
-      renderNameScreen();
-      return;
-    }
-
+}
+
+function showError(message) {
+    $("feedback").textContent = message;
+    $("feedback").classList.add("error-feedback");
+}
+
+function showNameScreen() {
+    $("player-screen").classList.remove("hidden");
+    $("game-screen").classList.add("hidden");
+    $("name-error").textContent = "";
+    currentState = null;
+    wireStageKey = null;
+    wireOrder = [];
+}
+
+function showGameScreen() {
+    $("player-screen").classList.add("hidden");
+    $("game-screen").classList.remove("hidden");
+}
+
+function renderState(state) {
     currentState = state;
 
-    $("stats-panel").hidden = false;
-    $("hint-button").hidden = false;
-    $("restart-button").hidden = false;
-    $("stage-number").textContent =
-      state.stage <= 6 ? `${state.stage} / 6` : "6 / 6";
-    $("difficulty").textContent = state.difficulty_name || "Mediu";
-    $("mistakes").textContent = state.mistakes ?? 0;
-    $("hints").textContent = state.hints ?? 0;
+    if (state.needs_name) {
+        showNameScreen();
+        return;
+    }
+
+    showGameScreen();
+
+    if (wireStageKey !== state.stage) {
+        wireStageKey = state.stage;
+        wireOrder = (state.wire_target || []).slice();
+        selectedWire = null;
+    }
+
+    $("player-label").textContent = state.player_name || "Explorator";
     $("stage-label").textContent =
-      state.stage <= 6
-        ? `ETAPA ${String(state.stage).padStart(2, "0")}`
-        : "MISIUNE FINALIZATĂ";
-    $("stage-name").textContent = state.stage_name || "RoboScape";
-    $("feedback").textContent = state.feedback || "Continuă misiunea.";
+        state.stage <= 6
+            ? `Etapa ${state.stage} din 6`
+            : "Misiune completă";
 
-    if (state.status === "won" || state.stage > 6) {
-      renderVictory(state);
-      return;
-    }
+    $("stage-number").textContent =
+        state.stage <= 6
+            ? String(state.stage).padStart(2, "0")
+            : "✓";
 
-    switch (Number(state.stage)) {
-      case 1: renderMaze(state); break;
-      case 2: renderBomb(state); break;
-      case 3: renderWires(state); break;
-      case 4: renderMaze(state, true); break;
-      case 5: renderLogic(state); break;
-      case 6: renderCircuit(state); break;
-      default:
-        area().replaceChildren(el("p", "loading-error", "Etapă necunoscută."));
-    }
-  }
+    $("challenge-title").textContent =
+        state.stage_name || "Misiune completă";
 
-  async function loadLeaderboard() {
-    try {
-      const entries = await api("/leaderboard");
-      const list = $("leaderboard-list");
-      list.replaceChildren();
+    $("challenge-description").textContent =
+        state.stage_description || "";
 
-      $("leaderboard-status").textContent = entries.length
-        ? "Cel mai bun rezultat pentru fiecare nume."
-        : "Încă nu există rezultate înregistrate.";
+    $("difficulty-label").textContent = {
+        easy: "Ușor",
+        normal: "Normal",
+        hard: "Dificil",
+    }[state.difficulty] || "Normal";
 
-      entries.forEach((entry, index) => {
-        const item = el("li", "leaderboard-item");
-        item.appendChild(el("span", "leaderboard-rank", `#${index + 1}`));
+    $("mistakes-stat").textContent = state.mistakes;
+    $("hints-stat").textContent = state.hints;
+    $("successes-stat").textContent = state.successes;
 
-        const info = el("span", "leaderboard-player");
-        info.appendChild(el("strong", "", entry.name));
-        info.appendChild(el(
-          "small", "",
-          entry.completed ? "Misiune completată" : `Etape: ${entry.stages}/6`
-        ));
+    const progress = Math.min(100, Math.round(
+        Math.min(state.stage, 6) / 6 * 100
+    ));
 
-        item.appendChild(info);
-        item.appendChild(el(
-          "span", "leaderboard-score",
-          `${entry.stages}/6 · ${entry.mistakes} greșeli · ${entry.seconds}s`
-        ));
-        list.appendChild(item);
-      });
-    } catch (error) {
-      $("leaderboard-status").textContent =
-        "Nu am putut încărca clasamentul.";
-    }
+    $("progress-fill").style.width = `${progress}%`;
+    $("progress-text").textContent = `${progress}%`;
 
-    try {
-      const status = await api("/ml-status");
-      $("ml-status").textContent = status.message;
-    } catch (_) {
-      $("ml-status").textContent = "Starea modelului nu este disponibilă.";
-    }
-  }
+    $("feedback").textContent = state.feedback || "";
+    $("feedback").classList.remove("error-feedback");
 
-  async function pollBomb() {
-    if (polling || busy || !currentState || currentState.stage !== 2) return;
+    $("hint-btn").disabled = state.status !== "playing";
+    $("hint-btn").style.display =
+        state.status === "playing" ? "inline-flex" : "none";
 
-    polling = true;
+    renderChallenge(state);
 
-    try {
-      const state = await api("/state");
+    if (state.status === "won") {
+        $("challenge-title").textContent = "Ai evadat!";
+        $("challenge-description").textContent =
+            "Ai terminat toate cele șase provocări.";
+        $("game-content").innerHTML = `
+            <div class="victory">
+                <div class="victory-icon">🚀</div>
+                <h3>Misiune îndeplinită!</h3>
+                <p>Felicitări, exploratorule!</p>
+                <p>Greșeli: ${Number(state.mistakes) || 0}</p>
+                <button class="primary-button" id="next-player-btn">
+                    Următorul jucător →
+                </button>
+            </div>
+        `;
 
-      if (state.needs_name) {
-        render(state);
-      } else if (
-        !currentState ||
-        state.stage !== currentState.stage ||
-        state.bomb_phase !== currentState.bomb_phase ||
-        JSON.stringify(state.bomb_input) !==
-          JSON.stringify(currentState.bomb_input)
-      ) {
-        render(state);
-      } else {
-        currentState = state;
-        updateBombTimer(state);
-      }
-    } catch (error) {
-      console.error(error);
-    } finally {
-      polling = false;
-    }
-  }
-
-  document.addEventListener("DOMContentLoaded", async () => {
-    $("hint-button").addEventListener(
-      "click", () => sendAction({ type: "hint" })
-    );
-    $("restart-button").addEventListener(
-      "click", () => sendAction({ type: "restart" })
-    );
-    $("refresh-leaderboard").addEventListener("click", loadLeaderboard);
-
-    document.addEventListener("keydown", (event) => {
-      if (event.target instanceof HTMLInputElement) return;
-
-      const directions = {
-        ArrowUp: "up",
-        ArrowDown: "down",
-        ArrowLeft: "left",
-        ArrowRight: "right"
-      };
-
-      const direction = directions[event.key];
-      if (!direction || !currentState || busy) return;
-
-      if (currentState.stage === 1 || currentState.stage === 4) {
-        event.preventDefault();
-        sendAction({
-          type: currentState.stage === 1 ? "maze_move" : "grid_move",
-          direction
+        $("next-player-btn").addEventListener("click", () => {
+            sendAction("restart");
         });
-      }
+    }
+
+    loadLeaderboard();
+}
+
+function renderChallenge(state) {
+    const area = $("game-content");
+    area.innerHTML = "";
+
+    if (state.status !== "playing") {
+        return;
+    }
+
+    switch (state.stage) {
+        case 1:
+            renderMaze(state, area);
+            break;
+        case 2:
+            renderMemory(state, area);
+            break;
+        case 3:
+            renderWires(state, area);
+            break;
+        case 4:
+            renderSecurityGrid(state, area);
+            break;
+        case 5:
+            renderLogic(state, area);
+            break;
+        case 6:
+            renderCircuit(state, area);
+            break;
+        default:
+            area.textContent = "Etapă necunoscută.";
+    }
+}
+
+function renderMaze(state, area) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "maze-wrapper";
+
+    const board = document.createElement("div");
+    board.className = "board maze-board";
+
+    const player = state.maze_player || [0, 0];
+
+    state.maze.forEach((row, r) => {
+        row.forEach((cell, c) => {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "board-cell";
+
+            if (cell === 1) {
+                button.classList.add("wall");
+                button.disabled = true;
+                button.setAttribute("aria-label", "Perete");
+            } else {
+                button.classList.add("open-cell");
+                button.setAttribute("aria-label", `Celula ${r + 1}, ${c + 1}`);
+            }
+
+            if (player[0] === r && player[1] === c) {
+                button.textContent = "🤖";
+                button.classList.add("player-cell");
+            } else if (r === 4 && c === 4) {
+                button.textContent = "🚪";
+                button.classList.add("exit-cell");
+            }
+
+            board.appendChild(button);
+        });
     });
 
-    try {
-      render(await api("/state"));
-    } catch (error) {
-      showError(error);
+    wrapper.appendChild(board);
+    wrapper.appendChild(makeControls("maze_move"));
+    area.appendChild(wrapper);
+}
+
+function renderSecurityGrid(state, area) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "maze-wrapper";
+
+    const board = document.createElement("div");
+    board.className = "board security-board";
+
+    const player = Number(state.grid_player) || 0;
+
+    state.grid.forEach((safe, index) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "board-cell security-cell";
+        button.classList.add(safe ? "safe-cell" : "unsafe-cell");
+
+        if (index === player) {
+            button.textContent = "🤖";
+            button.classList.add("player-cell");
+        } else if (index === 24) {
+            button.textContent = "🚪";
+        } else if (safe) {
+            button.textContent = "•";
+        } else {
+            button.textContent = "×";
+        }
+
+        board.appendChild(button);
+    });
+
+    wrapper.appendChild(board);
+    wrapper.appendChild(makeControls("grid_move"));
+    area.appendChild(wrapper);
+}
+
+function makeControls(actionType) {
+    const controls = document.createElement("div");
+    controls.className = "direction-controls";
+
+    const layout = [
+        { text: "↑", dx: 0, dy: -1, label: "Sus" },
+        { text: "←", dx: -1, dy: 0, label: "Stânga" },
+        { text: "↓", dx: 0, dy: 1, label: "Jos" },
+        { text: "→", dx: 1, dy: 0, label: "Dreapta" },
+    ];
+
+    layout.forEach((item) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "direction-button";
+        button.textContent = item.text;
+        button.setAttribute("aria-label", item.label);
+        button.addEventListener("click", () => {
+            sendAction(actionType, {
+                dx: item.dx,
+                dy: item.dy,
+            });
+        });
+        controls.appendChild(button);
+    });
+
+    return controls;
+}
+
+function renderMemory(state, area) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "memory-wrapper";
+
+    if (state.bomb_phase === "show") {
+        const label = document.createElement("p");
+        label.className = "memory-label";
+        label.textContent = "Memorează ordinea simbolurilor:";
+        wrapper.appendChild(label);
+
+        const sequence = document.createElement("div");
+        sequence.className = "symbol-sequence";
+
+        (state.bomb_sequence || []).forEach((symbol) => {
+            const item = document.createElement("span");
+            item.className = "sequence-symbol";
+            item.textContent = symbol;
+            sequence.appendChild(item);
+        });
+
+        wrapper.appendChild(sequence);
+
+        const note = document.createElement("p");
+        note.className = "muted-note";
+        note.textContent = "Simbolurile vor dispărea în câteva secunde.";
+        wrapper.appendChild(note);
+    } else {
+        const label = document.createElement("p");
+        label.className = "memory-label";
+        label.textContent = "Reproduce șirul, de la stânga la dreapta:";
+        wrapper.appendChild(label);
+
+        const progress = document.createElement("p");
+        progress.className = "memory-progress";
+        progress.textContent =
+            `${state.bomb_index} / ${state.bomb_length}`;
+        wrapper.appendChild(progress);
+
+        const grid = document.createElement("div");
+        grid.className = "symbol-grid";
+
+        SYMBOLS.forEach((symbol) => {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "symbol-button";
+            button.textContent = symbol;
+            button.addEventListener("click", () => {
+                sendAction("bomb_pick", { symbol });
+            });
+            grid.appendChild(button);
+        });
+
+        wrapper.appendChild(grid);
     }
 
-    await loadLeaderboard();
-    pollTimer = setInterval(pollBomb, 500);
-  });
-})();
+    area.appendChild(wrapper);
+}
+
+function renderWires(state, area) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "wires-wrapper";
+
+    const instruction = document.createElement("p");
+    instruction.className = "memory-label";
+    instruction.textContent =
+        "Selectează două cabluri pentru a le schimba pozițiile.";
+    wrapper.appendChild(instruction);
+
+    const list = document.createElement("div");
+    list.className = "wire-list";
+
+    const colors = state.wire_colors || [
+        "Roșu", "Albastru", "Galben", "Verde"
+    ];
+
+    const colorClasses = ["red", "blue", "yellow", "green"];
+
+    wireOrder.forEach((wireIndex, position) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "wire-item";
+
+        if (selectedWire === position) {
+            button.classList.add("wire-selected");
+        }
+
+        const line = document.createElement("span");
+        line.className = `wire-line ${colorClasses[wireIndex] || "red"}`;
+
+        const label = document.createElement("span");
+        label.textContent = `${position + 1}. ${colors[wireIndex]}`;
+
+        button.appendChild(line);
+        button.appendChild(label);
+
+        button.addEventListener("click", () => {
+            if (selectedWire === null) {
+                selectedWire = position;
+                renderWires(currentState, $("game-content"));
+                return;
+            }
+
+            if (selectedWire === position) {
+                selectedWire = null;
+                renderWires(currentState, $("game-content"));
+                return;
+            }
+
+            const temp = wireOrder[selectedWire];
+            wireOrder[selectedWire] = wireOrder[position];
+            wireOrder[position] = temp;
+            selectedWire = null;
+
+            if (wireOrder.every((value, index) => value === index)) {
+                sendAction("wire_solved");
+            } else {
+                sendAction("wire_wrong");
+            }
+        });
+
+        list.appendChild(button);
+    });
+
+    wrapper.appendChild(list);
+    area.appendChild(wrapper);
+}
+
+function renderLogic(state, area) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "logic-wrapper";
+
+    const question = document.createElement("p");
+    question.className = "logic-question";
+    question.textContent = state.logic_question || "Rezolvă problema.";
+    wrapper.appendChild(question);
+
+    const form = document.createElement("form");
+    form.className = "logic-form";
+
+    const input = document.createElement("input");
+    input.type = "number";
+    input.id = "logic-answer";
+    input.placeholder = "Răspunsul tău";
+    input.required = true;
+    input.setAttribute("aria-label", "Răspuns numeric");
+
+    const button = document.createElement("button");
+    button.type = "submit";
+    button.className = "primary-button";
+    button.textContent = "Verifică răspunsul";
+
+    form.appendChild(input);
+    form.appendChild(button);
+
+    form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        sendAction("logic_submit", {
+            answer: input.value,
+        });
+    });
+
+    wrapper.appendChild(form);
+    area.appendChild(wrapper);
+}
+
+function renderCircuit(state, area) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "circuit-wrapper";
+
+    const note = document.createElement("p");
+    note.className = "muted-note";
+    note.textContent =
+        "Apasă pe fiecare piesă pentru a o roti cu 90°.";
+    wrapper.appendChild(note);
+
+    const board = document.createElement("div");
+    board.className = "circuit-board";
+
+    (state.circuit || []).forEach((tile, index) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = `circuit-tile ${tile.kind}`;
+        button.setAttribute("aria-label", `Rotește piesa ${index + 1}`);
+
+        const symbol = document.createElement("span");
+        symbol.className = "circuit-symbol";
+        symbol.style.transform = `rotate(${tile.rotation * 90}deg)`;
+        symbol.textContent = tile.kind === "elbow" ? "└" : "━";
+
+        button.appendChild(symbol);
+        button.addEventListener("click", () => {
+            sendAction("circuit_rotate", { index });
+        });
+
+        board.appendChild(button);
+    });
+
+    wrapper.appendChild(board);
+    area.appendChild(wrapper);
+}
+
+async function loadLeaderboard() {
+    try {
+        const rows = await api("/leaderboard");
+        const list = $("leaderboard-list");
+        list.innerHTML = "";
+
+        if (!rows.length) {
+            const item = document.createElement("li");
+            item.textContent = "Încă nu există rezultate.";
+            list.appendChild(item);
+            return;
+        }
+
+        rows.forEach((row) => {
+            const item = document.createElement("li");
+            const name = document.createElement("span");
+            const score = document.createElement("strong");
+
+            name.textContent = row.name;
+            score.textContent =
+                `${row.completed}/6 · ${row.mistakes} greșeli`;
+
+            item.appendChild(name);
+            item.appendChild(score);
+            list.appendChild(item);
+        });
+    } catch {
+        $("leaderboard-list").textContent =
+            "Clasamentul nu este disponibil momentan.";
+    }
+}
+
+async function loadMLStatus() {
+    try {
+        const result = await api("/ml-status");
+        $("ml-status").textContent = result.message;
+    } catch {
+        $("ml-status").textContent =
+            "Starea modelului nu este disponibilă momentan.";
+    }
+}
+
+$("player-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+
+    const name = $("player-name").value.trim();
+
+    if (!name) {
+        $("name-error").textContent = "Introdu un nume.";
+        return;
+    }
+
+    $("name-error").textContent = "";
+
+    try {
+        const state = await api("/start", {
+            method: "POST",
+            body: JSON.stringify({ name }),
+        });
+
+        renderState(state);
+        loadMLStatus();
+    } catch (error) {
+        $("name-error").textContent = error.message;
+    }
+});
+
+$("hint-btn").addEventListener("click", () => {
+    sendAction("hint");
+});
+
+$("restart-btn").addEventListener("click", () => {
+    sendAction("restart");
+});
+
+async function refreshState() {
+    if (
+        !currentState ||
+        currentState.stage !== 2 ||
+        currentState.status !== "playing"
+    ) {
+        return;
+    }
+
+    try {
+        const state = await api("/state");
+
+        if (state.needs_name) {
+            showNameScreen();
+        } else {
+            renderState(state);
+        }
+    } catch {
+        // O eroare temporară de rețea nu oprește jocul.
+    }
+}
+
+async function initialize() {
+    try {
+        const state = await api("/state");
+
+        if (state.needs_name) {
+            showNameScreen();
+        } else {
+            renderState(state);
+        }
+    } catch {
+        showNameScreen();
+    }
+
+    loadLeaderboard();
+    loadMLStatus();
+}
+
+setInterval(refreshState, 500);
+initialize();
