@@ -1,51 +1,46 @@
 
 import random
 import time
+import uuid
 from collections import deque
+
 from ml_model import predict_difficulty
 
 MAZE_SIZE = 7
 GRID_SIZE = 5
-
-MAZE_WALLS = [
-    [0, 2], [0, 3], [0, 5], [1, 1], [1, 3],
-    [1, 5], [2, 1], [2, 2], [2, 5], [3, 3],
-    [3, 4], [3, 5], [4, 1], [4, 3], [5, 1],
-    [5, 5], [6, 2], [6, 3], [6, 5]
-]
-
-GRID_WALLS = [
-    [0, 2], [1, 0], [1, 2], [1, 4], [3, 1], [3, 2]
-]
-
 SYMBOLS = ["▲", "●", "■", "◆", "★"]
 COLORS = ["Albastru", "Galben", "Mov", "Verde", "Roșu"]
 
-DIFFICULTY_NAMES = {
-    1: "Ușor",
-    2: "Mediu",
-    3: "Dificil"
-}
-
+MAZE_WALLS = [
+    [0, 2], [0, 3], [0, 5], [1, 1], [1, 3], [1, 5],
+    [2, 1], [2, 2], [2, 5], [3, 3], [3, 4], [3, 5],
+    [4, 1], [4, 3], [5, 1], [5, 5], [6, 2], [6, 3], [6, 5],
+]
+GRID_WALLS = [
+    [0, 2], [1, 0], [1, 2], [1, 4], [3, 1], [3, 2],
+]
 LOGIC_QUESTIONS = [
     {"question": "Completează șirul: 2, 4, 8, 16, ?", "answer": 32},
     {"question": "Completează șirul: 3, 6, 9, 12, ?", "answer": 15},
     {"question": "Completează șirul: 1, 4, 9, 16, ?", "answer": 25},
     {"question": "Completează șirul: 5, 10, 15, 20, ?", "answer": 25},
-    {"question": "Completează șirul: 1, 2, 4, 8, ?", "answer": 16}
+    {"question": "Completează șirul: 1, 2, 4, 8, ?", "answer": 16},
 ]
+
+DIFFICULTY_NAMES = {1: "Ușor", 2: "Mediu", 3: "Dificil"}
 
 
 def update_difficulty(game):
-    try:
-        level = predict_difficulty(
-            game["mistakes"],
-            game["hints"],
-            game["successes"]
-        )
-        game["difficulty"] = max(1, min(3, int(level)))
-    except Exception:
-        game["difficulty"] = 2
+    elapsed = max(0, int(time.time() - game["started_at"]))
+
+    game["difficulty"] = predict_difficulty(
+        game["mistakes"],
+        game["hints"],
+        game["successes"],
+        stage=game["stage"],
+        elapsed_seconds=elapsed,
+        current_difficulty=game["difficulty"],
+    )
 
 
 def enter_stage(game, stage):
@@ -71,13 +66,9 @@ def enter_stage(game, stage):
         game["stage_name"] = "Panoul de cabluri"
         count = 5 if game["difficulty"] == 3 else 4
         game["colors"] = COLORS[:count]
-
-        # Amestecăm pozițiile cablurilor din dreapta.
         game["wire_target"] = random.sample(range(count), count)
-
         while game["wire_target"] == list(range(count)):
             game["wire_target"] = random.sample(range(count), count)
-
         game["wire_input"] = []
 
     elif stage == 4:
@@ -109,6 +100,9 @@ def advance_stage(game):
 
 def new_game():
     game = {
+        "session_id": str(uuid.uuid4()),
+        "started_at": time.time(),
+        "_session_logged": False,
         "stage": 1,
         "stage_name": "Labirintul navei",
         "status": "playing",
@@ -129,9 +123,8 @@ def new_game():
         "grid_pos": [0, 0],
         "logic_question": "",
         "logic_answer": 0,
-        "circuit": []
+        "circuit": [],
     }
-
     enter_stage(game, 1)
     return game
 
@@ -142,18 +135,12 @@ def update_bomb(game):
 
     now = time.time()
 
-    if (
-        game["bomb_phase"] == "show"
-        and now >= game["bomb_show_until"]
-    ):
+    if game["bomb_phase"] == "show" and now >= game["bomb_show_until"]:
         game["bomb_phase"] = "input"
         game["bomb_deadline"] = now + 20
         game["feedback"] = "Introdu simbolurile în ordinea memorată."
 
-    elif (
-        game["bomb_phase"] == "input"
-        and now >= game["bomb_deadline"]
-    ):
+    elif game["bomb_phase"] == "input" and now >= game["bomb_deadline"]:
         game["mistakes"] += 1
         game["bomb_input"] = []
         game["bomb_phase"] = "show"
@@ -162,15 +149,11 @@ def update_bomb(game):
         game["feedback"] = "Timpul a expirat. Memorează din nou."
 
 
-def move_player(game, key, walls, size):
+def move_player(game, key, walls, size, direction):
     row, col = game[key]
-    direction = game.get("_direction", "")
-
     delta = {
-        "up": (-1, 0),
-        "down": (1, 0),
-        "left": (0, -1),
-        "right": (0, 1)
+        "up": (-1, 0), "down": (1, 0),
+        "left": (0, -1), "right": (0, 1),
     }
 
     if direction not in delta:
@@ -178,22 +161,17 @@ def move_player(game, key, walls, size):
 
     dr, dc = delta[direction]
     nr, nc = row + dr, col + dc
-
-    extra_walls = [w[:] for w in walls]
+    blocked = [wall[:] for wall in walls]
 
     if key == "grid_pos" and game["difficulty"] >= 2:
-        extra_walls.append([3, 3])
+        blocked.append([3, 3])
 
-    if (
-        not (0 <= nr < size and 0 <= nc < size)
-        or [nr, nc] in extra_walls
-    ):
+    if not (0 <= nr < size and 0 <= nc < size) or [nr, nc] in blocked:
         game["mistakes"] += 1
         game["feedback"] = "Drum blocat! Încearcă altă direcție."
         return
 
     game[key] = [nr, nc]
-    game["feedback"] = ""
 
     if [nr, nc] == [size - 1, size - 1]:
         game["feedback"] = "Ai găsit ieșirea!"
@@ -206,19 +184,13 @@ def get_ports(tile):
     if tile["kind"] == "straight":
         return {"N", "S"} if rotation % 2 == 0 else {"E", "W"}
 
-    if tile["kind"] == "elbow":
-        return [
-            {"N", "E"},
-            {"E", "S"},
-            {"S", "W"},
-            {"W", "N"}
-        ][rotation]
-
-    return {"N", "E", "S", "W"}
+    return [
+        {"N", "E"}, {"E", "S"}, {"S", "W"}, {"W", "N"}
+    ][rotation]
 
 
 def create_circuit(game):
-    # Traseul corect: 0 -> 1 -> 2 -> 6 -> 10 -> 11 -> 15.
+    # Traseul de bază trece prin celulele 0, 1, 2, 6, 10, 11 și 15.
     solution = {
         0: ("straight", 1),
         1: ("straight", 1),
@@ -226,26 +198,20 @@ def create_circuit(game):
         6: ("straight", 0),
         10: ("elbow", 0),
         11: ("elbow", 2),
-        15: ("elbow", 0)
+        15: ("elbow", 0),
     }
 
     tiles = []
 
     for i in range(16):
         if i in solution:
-            kind, correct_rotation = solution[i]
-            rotation = (correct_rotation + random.randint(1, 3)) % 4
+            kind, correct = solution[i]
+            rotation = (correct + random.randint(1, 3)) % 4
         else:
             kind = random.choice(["straight", "elbow"])
             rotation = random.randint(0, 3)
 
-        tiles.append({
-            "kind": kind,
-            "rotation": rotation
-        })
-
-    if circuit_is_connected(tiles):
-        tiles[0]["rotation"] = (tiles[0]["rotation"] + 1) % 4
+        tiles.append({"kind": kind, "rotation": rotation})
 
     game["circuit"] = tiles
 
@@ -255,7 +221,7 @@ def circuit_is_connected(tiles):
         "N": (-1, 0, "S"),
         "E": (0, 1, "W"),
         "S": (1, 0, "N"),
-        "W": (0, -1, "E")
+        "W": (0, -1, "E"),
     }
 
     if len(tiles) != 16 or "W" not in get_ports(tiles[0]):
@@ -266,8 +232,7 @@ def circuit_is_connected(tiles):
 
     while queue:
         r, c = queue.popleft()
-        idx = r * 4 + c
-        ports = get_ports(tiles[idx])
+        ports = get_ports(tiles[r * 4 + c])
 
         if (r, c) == (3, 3) and "E" in ports:
             return True
@@ -279,14 +244,10 @@ def circuit_is_connected(tiles):
             if not (0 <= nr < 4 and 0 <= nc < 4):
                 continue
 
-            next_idx = nr * 4 + nc
-
-            if (
-                opposite in get_ports(tiles[next_idx])
-                and (nr, nc) not in seen
-            ):
-                seen.add((nr, nc))
-                queue.append((nr, nc))
+            if opposite in get_ports(tiles[nr * 4 + nc]):
+                if (nr, nc) not in seen:
+                    seen.add((nr, nc))
+                    queue.append((nr, nc))
 
     return False
 
@@ -300,9 +261,7 @@ def public_state(game):
         "status": game["status"],
         "feedback": game["feedback"],
         "difficulty": game["difficulty"],
-        "difficulty_name": DIFFICULTY_NAMES.get(
-            game["difficulty"], "Mediu"
-        ),
+        "difficulty_name": DIFFICULTY_NAMES[game["difficulty"]],
         "mistakes": game["mistakes"],
         "hints": game["hints"],
         "successes": game["successes"],
@@ -323,7 +282,7 @@ def public_state(game):
         "grid_walls": GRID_WALLS,
         "grid_pos": game["grid_pos"],
         "logic_question": game["logic_question"],
-        "circuit": game["circuit"]
+        "circuit": game["circuit"],
     }
 
 
@@ -331,8 +290,10 @@ def handle_action(game, action):
     kind = action.get("type", "")
 
     if kind == "restart":
+        player_name = game.get("player_name", "")
         game.clear()
         game.update(new_game())
+        game["player_name"] = player_name
         return public_state(game)
 
     if kind == "tick":
@@ -341,34 +302,31 @@ def handle_action(game, action):
 
     if kind == "hint":
         game["hints"] += 1
-
         hints = {
             1: "Folosește săgețile pentru a evita pereții.",
-            2: "Memorează simbolurile afișate pe bombă, de la stânga la dreapta.",
-            3: "Trage capetele cablurilor până când liniile nu se mai intersectează.",
-            4: "Găsește drumul spre colțul din dreapta jos.",
+            2: "Memorează simbolurile de la stânga la dreapta.",
+            3: "Trage capetele cablurilor pentru a le descurca.",
+            4: "Ajungi la ieșirea din colțul din dreapta jos.",
             5: "Observă regula matematică din șir.",
-            6: "Rotește piesele pentru a conecta sursa cu ieșirea."
+            6: "Rotește piesele pentru a conecta sursa cu ieșirea.",
         }
-
-        game["feedback"] = hints.get(
-            game["stage"], "Misiune finalizată!"
-        )
+        game["feedback"] = hints.get(game["stage"], "Misiune finalizată!")
         return public_state(game)
 
     if game["status"] == "won":
         return public_state(game)
 
-    if kind in ("maze_move", "grid_move"):
-        game["_direction"] = action.get("direction", "")
+    if kind == "maze_move" and game["stage"] == 1:
+        move_player(
+            game, "maze_pos", MAZE_WALLS, MAZE_SIZE,
+            action.get("direction", "")
+        )
 
-        if kind == "maze_move" and game["stage"] == 1:
-            move_player(game, "maze_pos", MAZE_WALLS, MAZE_SIZE)
-
-        elif kind == "grid_move" and game["stage"] == 4:
-            move_player(game, "grid_pos", GRID_WALLS, GRID_SIZE)
-
-        game.pop("_direction", None)
+    elif kind == "grid_move" and game["stage"] == 4:
+        move_player(
+            game, "grid_pos", GRID_WALLS, GRID_SIZE,
+            action.get("direction", "")
+        )
 
     elif kind == "bomb_pick" and game["stage"] == 2:
         update_bomb(game)
@@ -386,7 +344,6 @@ def handle_action(game, action):
                 if len(game["bomb_input"]) == len(game["bomb_sequence"]):
                     game["feedback"] = "Bomba a fost dezactivată!"
                     advance_stage(game)
-
             else:
                 game["mistakes"] += 1
                 game["bomb_input"] = []
@@ -396,7 +353,7 @@ def handle_action(game, action):
                 game["feedback"] = "Simbol greșit! Memorează din nou."
 
     elif kind == "wire_solved" and game["stage"] == 3:
-        game["feedback"] = "Perfect! Ai descurcat toate cablurile."
+        game["feedback"] = "Ai descurcat toate cablurile!"
         advance_stage(game)
 
     elif kind == "logic_submit" and game["stage"] == 5:
@@ -406,7 +363,7 @@ def handle_action(game, action):
             answer = None
 
         if answer == game["logic_answer"]:
-            game["feedback"] = "Răspuns corect! Terminalul a fost deblocat."
+            game["feedback"] = "Răspuns corect! Terminal deblocat."
             advance_stage(game)
         else:
             game["mistakes"] += 1
@@ -419,17 +376,14 @@ def handle_action(game, action):
             idx = -1
 
         if 0 <= idx < len(game["circuit"]):
-            game["circuit"][idx]["rotation"] = (
-                game["circuit"][idx]["rotation"] + 1
-            ) % 4
+            tile = game["circuit"][idx]
+            tile["rotation"] = (tile["rotation"] + 1) % 4
 
             if circuit_is_connected(game["circuit"]):
-                game["feedback"] = "Circuit complet! Capsula este alimentată."
+                game["feedback"] = "Circuit conectat! Capsula este alimentată."
                 advance_stage(game)
             else:
-                game["feedback"] = (
-                    "Piesă rotită. Continuă să conectezi circuitul."
-                )
+                game["feedback"] = "Continuă să conectezi circuitul."
 
     update_bomb(game)
     return public_state(game)
