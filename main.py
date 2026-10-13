@@ -6,7 +6,6 @@ from ml_model import predict_difficulty
 
 MAZE_SIZE = 7
 GRID_SIZE = 5
-CIRCUIT_SIZE = 4
 
 MAZE_WALLS = [
     [0, 2], [0, 3], [0, 5], [1, 1], [1, 3],
@@ -39,17 +38,12 @@ LOGIC_QUESTIONS = [
 
 def update_difficulty(game):
     try:
-        game["difficulty"] = max(
-            1,
-            min(
-                3,
-                int(predict_difficulty(
-                    game["mistakes"],
-                    game["hints"],
-                    game["successes"]
-                ))
-            )
+        level = predict_difficulty(
+            game["mistakes"],
+            game["hints"],
+            game["successes"]
         )
+        game["difficulty"] = max(1, min(3, int(level)))
     except Exception:
         game["difficulty"] = 2
 
@@ -76,10 +70,14 @@ def enter_stage(game, stage):
     elif stage == 3:
         game["stage_name"] = "Panoul de cabluri"
         count = 5 if game["difficulty"] == 3 else 4
-        game["colors"] = COLORS[:]
-        game["wire_target"] = random.sample(
-            range(len(COLORS)), count
-        )
+        game["colors"] = COLORS[:count]
+
+        # Amestecăm pozițiile cablurilor din dreapta.
+        game["wire_target"] = random.sample(range(count), count)
+
+        while game["wire_target"] == list(range(count)):
+            game["wire_target"] = random.sample(range(count), count)
+
         game["wire_input"] = []
 
     elif stage == 4:
@@ -220,27 +218,34 @@ def get_ports(tile):
 
 
 def create_circuit(game):
+    # Traseul corect: 0 -> 1 -> 2 -> 6 -> 10 -> 11 -> 15.
     solution = {
         0: ("straight", 1),
         1: ("straight", 1),
         2: ("elbow", 2),
         6: ("straight", 0),
         10: ("elbow", 0),
-        11: ("elbow", 1),
-        15: ("straight", 0)
+        11: ("elbow", 2),
+        15: ("elbow", 0)
     }
 
     tiles = []
 
     for i in range(16):
         if i in solution:
-            kind, correct = solution[i]
-            rotation = (correct + random.choice([1, 2, 3])) % 4
+            kind, correct_rotation = solution[i]
+            rotation = (correct_rotation + random.randint(1, 3)) % 4
         else:
             kind = random.choice(["straight", "elbow"])
             rotation = random.randint(0, 3)
 
-        tiles.append({"kind": kind, "rotation": rotation})
+        tiles.append({
+            "kind": kind,
+            "rotation": rotation
+        })
+
+    if circuit_is_connected(tiles):
+        tiles[0]["rotation"] = (tiles[0]["rotation"] + 1) % 4
 
     game["circuit"] = tiles
 
@@ -264,22 +269,24 @@ def circuit_is_connected(tiles):
         idx = r * 4 + c
         ports = get_ports(tiles[idx])
 
-        if (r, c) == (3, 3) and "S" in ports:
+        if (r, c) == (3, 3) and "E" in ports:
             return True
 
-        for p in ports:
-            dr, dc, opposite = directions[p]
+        for port in ports:
+            dr, dc, opposite = directions[port]
             nr, nc = r + dr, c + dc
 
-            if 0 <= nr < 4 and 0 <= nc < 4:
-                next_idx = nr * 4 + nc
+            if not (0 <= nr < 4 and 0 <= nc < 4):
+                continue
 
-                if (
-                    opposite in get_ports(tiles[next_idx])
-                    and (nr, nc) not in seen
-                ):
-                    seen.add((nr, nc))
-                    queue.append((nr, nc))
+            next_idx = nr * 4 + nc
+
+            if (
+                opposite in get_ports(tiles[next_idx])
+                and (nr, nc) not in seen
+            ):
+                seen.add((nr, nc))
+                queue.append((nr, nc))
 
     return False
 
@@ -337,11 +344,11 @@ def handle_action(game, action):
 
         hints = {
             1: "Folosește săgețile pentru a evita pereții.",
-            2: "Memorează simbolurile de la stânga la dreapta.",
-            3: "Conectează culorile în ordinea afișată.",
+            2: "Memorează simbolurile afișate pe bombă, de la stânga la dreapta.",
+            3: "Trage capetele cablurilor până când liniile nu se mai intersectează.",
             4: "Găsește drumul spre colțul din dreapta jos.",
             5: "Observă regula matematică din șir.",
-            6: "Rotește piesele pentru a potrivi porturile vecine."
+            6: "Rotește piesele pentru a conecta sursa cu ieșirea."
         }
 
         game["feedback"] = hints.get(
@@ -388,32 +395,9 @@ def handle_action(game, action):
                 game["bomb_deadline"] = 0
                 game["feedback"] = "Simbol greșit! Memorează din nou."
 
-    elif kind == "wire_pick" and game["stage"] == 3:
-        try:
-            color = int(action.get("color"))
-        except (TypeError, ValueError):
-            color = -1
-
-        if (
-            0 <= color < len(game["colors"])
-            and color not in game["wire_input"]
-        ):
-            idx = len(game["wire_input"])
-
-            if (
-                idx < len(game["wire_target"])
-                and color == game["wire_target"][idx]
-            ):
-                game["wire_input"].append(color)
-
-                if len(game["wire_input"]) == len(game["wire_target"]):
-                    game["feedback"] = "Cablurile au fost conectate corect!"
-                    advance_stage(game)
-
-            else:
-                game["mistakes"] += 1
-                game["wire_input"] = []
-                game["feedback"] = "Ordine greșită! Încearcă din nou."
+    elif kind == "wire_solved" and game["stage"] == 3:
+        game["feedback"] = "Perfect! Ai descurcat toate cablurile."
+        advance_stage(game)
 
     elif kind == "logic_submit" and game["stage"] == 5:
         try:
