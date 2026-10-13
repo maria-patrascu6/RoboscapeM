@@ -5,11 +5,12 @@ import time
 from ml_model import predict_difficulty
 
 
-SYMBOLS = ["▲", "●", "■", "◆", "★", "⬟", "✚", "⬢"]
+# Exact 6 forme pentru jocul de memorie.
+SYMBOLS = ["▲", "●", "■", "◆", "★", "⬟"]
 
 STAGE_NAMES = {
     1: "Labirintul",
-    2: "Memoria reactorului",
+    2: "Bomba reactorului",
     3: "Conectarea cablurilor",
     4: "Grila de securitate",
     5: "Codul logic",
@@ -18,19 +19,20 @@ STAGE_NAMES = {
 
 STAGE_DESCRIPTIONS = {
     1: "Găsește drumul spre ieșirea din labirint.",
-    2: "Memorează șirul de simboluri și reproduce-l corect.",
-    3: "Rearanjează cablurile în ordinea corectă.",
+    2: "Memorează secvența pentru a dezamorsa bomba.",
+    3: "Glisează cablurile în ordinea corectă.",
     4: "Urmează traseul sigur prin grila de securitate.",
     5: "Rezolvă problema logică pentru a debloca accesul.",
     6: "Rotește piesele până când circuitul se conectează.",
 }
 
+# 0 = liber, 1 = perete
 MAZE = [
     [0, 0, 1, 0, 0],
     [1, 0, 1, 0, 1],
     [0, 0, 0, 0, 1],
-    [0, 1, 1, 0, 0],
-    [0, 0, 0, 1, 0],
+    [0, 1, 1, 0, 1],
+    [0, 0, 0, 0, 0],
 ]
 
 SAFE_PATH = [0, 1, 6, 11, 12, 13, 18, 23, 24]
@@ -44,7 +46,6 @@ def get_ports(tile):
             return {"N", "S"}
         return {"E", "W"}
 
-    # Cotul de bază conectează nordul cu estul.
     elbows = [
         {"N", "E"},
         {"E", "S"},
@@ -57,6 +58,7 @@ def get_ports(tile):
 
 def create_circuit():
     solution = [0, 1, 2, 3, 7, 11, 15]
+
     target_rotations = {
         0: 1,
         1: 1,
@@ -80,8 +82,6 @@ def create_circuit():
                 "rotation": target_rotation,
             })
 
-            # Nu comparăm doar numărul rotației.
-            # Unele rotații ale pieselor drepte sunt echivalente.
             while get_ports({
                 "kind": kind,
                 "rotation": rotation,
@@ -116,7 +116,7 @@ def new_game(player_name):
         "bomb_phase": "show",
         "bomb_index": 0,
         "bomb_reveal_until": 0,
-        "wire_target": [],
+        "wire_target": [0, 1, 2, 3],
         "wire_colors": ["Roșu", "Albastru", "Galben", "Verde"],
         "logic_question": "",
         "logic_answer": 0,
@@ -132,19 +132,15 @@ def new_game(player_name):
 def enter_stage(game, stage):
     game["stage"] = stage
     game["stage_started_at"] = time.time()
-    game["feedback"] = STAGE_DESCRIPTIONS.get(
-        stage, "Misiune completată!"
-    )
+    game["feedback"] = STAGE_DESCRIPTIONS.get(stage, "")
 
     if stage == 2:
-        difficulty = game["difficulty"]
-
-        if difficulty == "easy":
-            length = 4
-        elif difficulty == "hard":
-            length = 8
-        else:
-            length = 6
+        lengths = {
+            "easy": 4,
+            "normal": 6,
+            "hard": 9,
+        }
+        length = lengths.get(game["difficulty"], 6)
 
         game["bomb_sequence"] = [
             random.choice(SYMBOLS) for _ in range(length)
@@ -152,7 +148,7 @@ def enter_stage(game, stage):
         game["bomb_phase"] = "show"
         game["bomb_index"] = 0
         game["bomb_reveal_until"] = (
-            time.time() + 2.5 + length * 0.65
+            time.time() + 3 + length * 0.6
         )
 
     elif stage == 3:
@@ -164,8 +160,9 @@ def enter_stage(game, stage):
 
     elif stage == 5:
         game["logic_question"] = (
-            "Un robot are 3 baterii. Fiecare baterie alimentează "
-            "2 module. Câte module pot fi alimentate simultan?"
+            "Un robot are 3 baterii. Fiecare baterie "
+            "alimentează 2 module. Câte module pot fi "
+            "alimentate simultan?"
         )
         game["logic_answer"] = 6
 
@@ -182,7 +179,9 @@ def public_state(game):
     ):
         game["bomb_phase"] = "input"
         game["bomb_index"] = 0
-        game["feedback"] = "Acum reproduce șirul de simboluri."
+        game["feedback"] = (
+            "Secvența a dispărut! Introdu simbolurile în ordine."
+        )
 
     elapsed = int(time.time() - game["started_at"])
 
@@ -214,7 +213,6 @@ def public_state(game):
         "circuit_connected": game["circuit_connected"],
     }
 
-    # Șirul nu este trimis în timpul introducerii răspunsului.
     if game["stage"] == 2 and game["bomb_phase"] == "show":
         state["bomb_sequence"] = game["bomb_sequence"]
     else:
@@ -251,45 +249,36 @@ def advance_stage(game):
 
 
 def move_player(game, dx, dy):
-    stage = game["stage"]
-
-    if stage == 1:
+    if game["stage"] == 1:
         row, col = game["maze_player"]
-        new_row = row + dy
-        new_col = col + dx
+        nr, nc = row + dy, col + dx
 
-        if not (
-            0 <= new_row < 5 and 0 <= new_col < 5
-        ):
+        if not (0 <= nr < 5 and 0 <= nc < 5):
             return
 
-        if game["maze"][new_row][new_col] == 1:
+        if game["maze"][nr][nc] == 1:
             game["feedback"] = "Drumul este blocat."
             return
 
-        game["maze_player"] = [new_row, new_col]
+        game["maze_player"] = [nr, nc]
 
-        if [new_row, new_col] == [4, 4]:
+        if [nr, nc] == [4, 4]:
             game["feedback"] = "Ai găsit ieșirea!"
             advance_stage(game)
 
-    elif stage == 4:
-        current = game["grid_player"]
-        row, col = divmod(current, 5)
-        new_row = row + dy
-        new_col = col + dx
+    elif game["stage"] == 4:
+        row, col = divmod(game["grid_player"], 5)
+        nr, nc = row + dy, col + dx
 
-        if not (
-            0 <= new_row < 5 and 0 <= new_col < 5
-        ):
+        if not (0 <= nr < 5 and 0 <= nc < 5):
             return
 
-        target = new_row * 5 + new_col
+        target = nr * 5 + nc
 
         if target not in SAFE_PATH:
             game["mistakes"] += 1
             game["feedback"] = (
-                "Celulă nesigură! Alege un alt traseu."
+                "Celulă nesigură! Încearcă altă direcție."
             )
             return
 
@@ -321,14 +310,12 @@ def circuit_has_path(tiles):
             return True
 
         row, col = divmod(current, 4)
-        ports = get_ports(tiles[current])
 
         for direction, (dr, dc, opposite) in directions.items():
-            if direction not in ports:
+            if direction not in get_ports(tiles[current]):
                 continue
 
-            nr = row + dr
-            nc = col + dc
+            nr, nc = row + dr, col + dc
 
             if not (0 <= nr < 4 and 0 <= nc < 4):
                 continue
@@ -385,21 +372,21 @@ def handle_action(game, data):
             game["bomb_index"] = 0
             game["bomb_reveal_until"] = (
                 time.time()
-                + 2.5
-                + len(game["bomb_sequence"]) * 0.65
+                + 3
+                + len(game["bomb_sequence"]) * 0.6
             )
             game["feedback"] = (
-                "Simbol greșit. Memorează noul șir!"
+                "Simbol greșit! Memorează noua secvență."
             )
             return
 
         game["bomb_index"] += 1
 
         if game["bomb_index"] == len(game["bomb_sequence"]):
-            game["feedback"] = "Șir corect!"
+            game["feedback"] = "Bombă dezamorsată!"
             advance_stage(game)
         else:
-            game["feedback"] = "Corect. Continuă!"
+            game["feedback"] = "Corect! Continuă."
 
     elif kind == "wire_solved" and game["stage"] == 3:
         advance_stage(game)
@@ -452,11 +439,11 @@ def handle_action(game, data):
         game["hints"] += 1
 
         hints = {
-            1: "Urmează coridorul liber spre dreapta și apoi în jos.",
-            2: "Reține atât forma, cât și ordinea simbolurilor.",
-            3: "Cablurile trebuie așezate în ordinea numerelor.",
-            4: "Mută-te numai pe celulele verzi ale traseului.",
-            5: "Înmulțește numărul bateriilor cu modulele per baterie.",
+            1: "Urmează coridorul liber până la ieșire.",
+            2: "Reține forma și ordinea fiecărui simbol.",
+            3: "Glisează fiecare cablu pe poziția numerotată corect.",
+            4: "Deplasează-te numai pe celulele sigure.",
+            5: "Înmulțește numărul bateriilor cu modulele fiecăreia.",
             6: "Rotește piesele pentru a conecta ieșirile vecine.",
         }
 
@@ -465,5 +452,4 @@ def handle_action(game, data):
         )
 
     elif kind == "tick" and game["stage"] == 2:
-        # public_state actualizează faza de memorare când expiră timpul.
         pass
