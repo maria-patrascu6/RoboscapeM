@@ -54,9 +54,7 @@ def _load_and_train():
 
     if CSV_PATH.exists():
         try:
-            with CSV_PATH.open(
-                "r", newline="", encoding="utf-8"
-            ) as file:
+            with CSV_PATH.open("r", newline="", encoding="utf-8") as file:
                 for row in csv.DictReader(file):
                     features = _features_from_row(row)
                     status = (
@@ -99,7 +97,7 @@ def _load_and_train():
         _MODEL_NOTE = (
             f"Date reale: {len(labels)} sesiuni. Sunt necesare "
             f"minimum {MIN_REAL_SAMPLES} sesiuni și ambele rezultate: "
-            "jocuri finalizate și jocuri nefinalizate."
+            "misiuni finalizate și misiuni nefinalizate."
         )
 
 
@@ -142,8 +140,10 @@ def predict_difficulty(
 
     if pressure >= 5:
         return 1
+
     if pressure <= 1 and int(successes) >= 2:
         return 3
+
     return 2
 
 
