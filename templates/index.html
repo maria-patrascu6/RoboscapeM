@@ -6,27 +6,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#0b1020">
   <title>RoboScape | Escape Room</title>
-
-  <link
-    rel="stylesheet"
-    href="{{ url_for('static', filename='style.css') }}"
-  >
-
-  <script
-    src="{{ url_for('static', filename='game.js') }}"
-    defer
-  ></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script src="{{ url_for('static', filename='game.js') }}" defer></script>
 </head>
-
 <body>
   <header class="topbar">
-    <a class="brand" href="/" aria-label="RoboScape pagina principală">
-      ROBO<span>SCAPE</span>
-    </a>
-
-    <span class="top-label">
-      SPACE STATION · EMERGENCY MODE
-    </span>
+    <a class="brand" href="/">ROBO<span>SCAPE</span></a>
+    <span class="top-label">SPACE STATION · EMERGENCY MODE</span>
   </header>
 
   <main class="container">
@@ -38,68 +24,65 @@
       </p>
     </section>
 
-    <section class="stats" aria-label="Statistici joc">
-      <div class="stat">
-        <span>ETAPĂ</span>
-        <strong id="stage-number">1 / 6</strong>
-      </div>
-
-      <div class="stat">
-        <span>DIFICULTATE</span>
-        <strong id="difficulty">Mediu</strong>
-      </div>
-
-      <div class="stat">
-        <span>GREȘELI</span>
-        <strong id="mistakes">0</strong>
-      </div>
-
-      <div class="stat">
-        <span>INDICII</span>
-        <strong id="hints">0</strong>
-      </div>
+    <section id="stats-panel" class="stats" hidden>
+      <div class="stat"><span>ETAPĂ</span><strong id="stage-number">1 / 6</strong></div>
+      <div class="stat"><span>DIFICULTATE</span><strong id="difficulty">Mediu</strong></div>
+      <div class="stat"><span>GREȘELI</span><strong id="mistakes">0</strong></div>
+      <div class="stat"><span>INDICII</span><strong id="hints">0</strong></div>
     </section>
 
-    <section class="game-panel">
+    <section id="game-panel" class="game-panel">
       <div class="panel-heading">
         <div>
-          <p class="eyebrow" id="stage-label">STAGE 01</p>
-          <h2 id="stage-name">Labirintul navei</h2>
+          <p class="eyebrow" id="stage-label">ETAPA 01</p>
+          <h2 id="stage-name">RoboScape</h2>
         </div>
-
-        <span class="live-indicator">
-          <span></span> ONLINE
-        </span>
+        <span class="live-indicator"><span></span> ONLINE</span>
       </div>
 
       <p id="feedback" class="feedback" aria-live="polite">
         Se încarcă misiunea...
       </p>
 
-      <div id="game-area" aria-live="polite"></div>
+      <div id="game-area"></div>
 
       <div class="panel-actions">
-        <button
-          id="hint-button"
-          class="secondary-button"
-          type="button"
-        >
+        <button id="hint-button" class="secondary-button" type="button" hidden>
           Cere un indiciu
         </button>
-
-        <button
-          id="restart-button"
-          class="danger-button"
-          type="button"
-        >
+        <button id="restart-button" class="danger-button" type="button" hidden>
           Reîncepe misiunea
         </button>
       </div>
     </section>
 
-    <p class="footer-note">
-      ROBOSCAPE · Prototip de joc cu dificultate adaptivă
-    </p>
+    <section class="leaderboard-panel">
+      <div class="leaderboard-heading">
+        <div>
+          <p class="eyebrow">HALL OF FAME</p>
+          <h2>Clasament RoboScape</h2>
+        </div>
+        <button id="refresh-leaderboard" class="secondary-button" type="button">
+          Actualizează
+        </button>
+      </div>
+
+      <p id="leaderboard-status" class="leaderboard-status">
+        Se încarcă rezultatele...
+      </p>
+      <ol id="leaderboard-list" class="leaderboard-list"></ol>
+
+      <div class="ml-status-box">
+        <strong>Starea ML:</strong>
+        <span id="ml-status">Se verifică modelul...</span>
+      </div>
+
+      <p class="leaderboard-links">
+        <a href="/download-data">Descarcă datele CSV</a>
+      </p>
+    </section>
+
+    <p class="footer-note">ROBOSCAPE · Prototip cu dificultate adaptivă</p>
   </main>
 </body>
 </html>
