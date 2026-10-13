@@ -5,25 +5,23 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from flask import (
-    Flask, jsonify, render_template, request, session, send_file
-)
+from flask import Flask, jsonify, render_template, request, session, send_file
 
 from main import new_game, handle_action, public_state
 from ml_model import model_status
 
 app = Flask(__name__)
 app.secret_key = os.environ.get(
-    "SECRET_KEY", "replace-this-with-a-long-random-secret"
+    "SECRET_KEY",
+    "change-this-to-a-long-random-secret",
 )
 
-BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(
-    os.environ.get("ROBOSCAPE_DATA_DIR", str(BASE_DIR / "data"))
+    os.environ.get("ROBOSCAPE_DATA_DIR", "/tmp/roboscape_data")
 )
 CSV_PATH = DATA_DIR / "game_sessions.csv"
 
-CSV_FIELDS = [
+FIELDS = [
     "session_id",
     "player_name",
     "started_at",
@@ -42,30 +40,9 @@ def ensure_csv():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
     if not CSV_PATH.exists() or CSV_PATH.stat().st_size == 0:
-        with CSV_PATH.open("w", newline="", encoding="utf-8") as file:
-            writer = csv.DictWriter(file, fieldnames=CSV_FIELDS)
+        with CSV_PATH.open("w", newline="", encoding="utf-8-sig") as file:
+            writer = csv.DictWriter(file, fieldnames=FIELDS)
             writer.writeheader()
-        return
-
-    try:
-        with CSV_PATH.open("r", newline="", encoding="utf-8") as file:
-            reader = csv.DictReader(file)
-            old_fields = reader.fieldnames or []
-            rows = list(reader)
-
-        if old_fields != CSV_FIELDS:
-            with CSV_PATH.open("w", newline="", encoding="utf-8") as file:
-                writer = csv.DictWriter(file, fieldnames=CSV_FIELDS)
-                writer.writeheader()
-
-                for row in rows:
-                    writer.writerow({
-                        field: row.get(field, "")
-                        for field in CSV_FIELDS
-                    })
-
-    except (OSError, csv.Error) as error:
-        app.logger.error("Eroare CSV: %s", error)
 
 
 def log_session(game, status):
@@ -75,21 +52,19 @@ def log_session(game, status):
     try:
         ensure_csv()
 
-        ended = time.time()
-        started = float(game.get("started_at", ended))
+        end_time = time.time()
+        start_time = float(game.get("started_at", end_time))
 
         row = {
             "session_id": game.get("session_id", ""),
-            "player_name": str(
-                game.get("player_name") or "Jucător"
-            ).strip()[:30],
+            "player_name": str(game.get("player_name") or "Jucător")[:30],
             "started_at": datetime.fromtimestamp(
-                started, timezone.utc
+                start_time, timezone.utc
             ).isoformat(),
             "ended_at": datetime.fromtimestamp(
-                ended, timezone.utc
+                end_time, timezone.utc
             ).isoformat(),
-            "duration_seconds": max(0, round(ended - started)),
+            "duration_seconds": max(0, round(end_time - start_time)),
             "final_status": status,
             "last_stage": game.get("stage", 1),
             "stages_completed": game.get("successes", 0),
@@ -98,14 +73,26 @@ def log_session(game, status):
             "final_difficulty": game.get("difficulty", 2),
         }
 
-        with CSV_PATH.open("a", newline="", encoding="utf-8") as file:
-            writer = csv.DictWriter(file, fieldnames=CSV_FIELDS)
+        with CSV_PATH.open("a", newline="", encoding="utf-8-sig") as file:
+            writer = csv.DictWriter(file, fieldnames=FIELDS)
             writer.writerow(row)
 
         game["_session_logged"] = True
+        app.logger.info(
+            "Sesiune salvată: %s (%s)",
+            row["player_name"],
+            status,
+        )
 
-    except Exception:
-        app.logger.exception("Nu am putut salva sesiunea.")
+    except (OSError, ValueError, csv.Error):
+        app.logger.exception("Nu am putut salva sesiunea în CSV.")
+
+
+def read_sessions():
+    ensure_csv()
+
+    with CSV_PATH.open("r", newline="", encoding="utf-8-sig") as file:
+        return list(csv.DictReader(file))
 
 
 def get_game():
@@ -115,17 +102,6 @@ def get_game():
     game = session["game"]
     game["player_name"] = session.get("player_name", "")
     return game
-
-
-def read_sessions():
-    if not CSV_PATH.exists():
-        return []
-
-    try:
-        with CSV_PATH.open("r", newline="", encoding="utf-8") as file:
-            return list(csv.DictReader(file))
-    except (OSError, csv.Error):
-        return []
 
 
 @app.get("/")
@@ -141,10 +117,9 @@ def start():
 
     if len(name) < 2:
         return jsonify({
-            "error": "Introdu un nume sau o poreclă de cel puțin 2 caractere."
+            "error": "Introdu un nume de cel puțin 2 caractere."
         }), 400
 
-    # Fiecare nume nou primește o misiune și un ID nou.
     session["player_name"] = name
 
     game = new_game()
@@ -176,7 +151,6 @@ def action():
     data = request.get_json(silent=True) or {}
 
     if data.get("type") == "restart":
-        # Salvează misiunea precedentă o singură dată.
         status = (
             "completed"
             if game.get("status") == "won"
@@ -184,7 +158,6 @@ def action():
         )
         log_session(game, status)
 
-        # Elimină numele precedent și pregătește ecranul de start.
         session.pop("player_name", None)
         session["game"] = new_game()
         session.modified = True
@@ -205,49 +178,29 @@ def action():
     return jsonify(result)
 
 
-@app.post("/restart")
-def restart():
-    # Rută alternativă pentru a reveni la formularul de nume.
-    old_game = session.get("game")
-
-    if old_game and session.get("player_name"):
-        status = (
-            "completed"
-            if old_game.get("status") == "won"
-            else "restarted"
-        )
-        log_session(old_game, status)
-
-    session.pop("player_name", None)
-    session["game"] = new_game()
-    session.modified = True
-
-    result = public_state(session["game"])
-    result["needs_name"] = True
-    return jsonify(result)
-
-
 @app.get("/leaderboard")
 def leaderboard():
     best = {}
 
-    for row in read_sessions():
-        name = (
-            row.get("player_name") or "Jucător"
-        ).strip() or "Jucător"
+    try:
+        rows = read_sessions()
+    except (OSError, csv.Error):
+        app.logger.exception("Nu am putut citi clasamentul.")
+        return jsonify([])
+
+    for row in rows:
+        name = (row.get("player_name") or "Jucător").strip()
 
         try:
             result = {
                 "name": name,
-                "completed": int(
-                    row.get("final_status") == "completed"
-                ),
+                "completed": int(row.get("final_status") == "completed"),
                 "stages": int(row.get("stages_completed") or 0),
                 "mistakes": int(row.get("mistakes") or 0),
                 "hints": int(row.get("hints") or 0),
                 "seconds": int(row.get("duration_seconds") or 0),
             }
-        except (TypeError, ValueError):
+        except (ValueError, TypeError):
             continue
 
         score = (
@@ -258,18 +211,17 @@ def leaderboard():
             -result["seconds"],
         )
 
-        if name not in best or score > best[name]["_score"]:
-            result["_score"] = score
-            best[name] = result
+        if name not in best or score > best[name]["score"]:
+            best[name] = {"score": score, "result": result}
 
-    ranking = sorted(
-        best.values(),
-        key=lambda item: item["_score"],
-        reverse=True,
-    )[:20]
-
-    for item in ranking:
-        item.pop("_score", None)
+    ranking = [
+        item["result"]
+        for item in sorted(
+            best.values(),
+            key=lambda item: item["score"],
+            reverse=True,
+        )[:20]
+    ]
 
     return jsonify(ranking)
 
@@ -281,14 +233,28 @@ def ml_status():
 
 @app.get("/download-data")
 def download_data():
-    ensure_csv()
+    try:
+        ensure_csv()
 
-    return send_file(
-        CSV_PATH,
-        as_attachment=True,
-        download_name="game_sessions.csv",
-        mimetype="text/csv",
-    )
+        response = send_file(
+            str(CSV_PATH),
+            as_attachment=True,
+            download_name="game_sessions.csv",
+            mimetype="text/csv; charset=utf-8",
+            conditional=False,
+        )
+
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    except OSError:
+        app.logger.exception("Nu am putut pregăti descărcarea CSV.")
+        return jsonify({
+            "error": (
+                "Serverul nu poate crea sau citi CSV-ul. "
+                "Verifică permisiunile și logurile Render."
+            )
+        }), 500
 
 
 if __name__ == "__main__":
