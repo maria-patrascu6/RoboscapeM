@@ -120,6 +120,7 @@ def start():
     return jsonify(public_state(game))
 
 
+
 @app.get("/state")
 def state():
     game = get_game()
@@ -128,8 +129,13 @@ def state():
         return jsonify({"needs_name": True})
 
     result = public_state(game)
+
+    session["game"] = game
+    session.modified = True
+
     result["needs_name"] = False
     return jsonify(result)
+
 
 
 @app.post("/action")
