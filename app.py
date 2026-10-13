@@ -4,7 +4,11 @@ from flask import Flask, jsonify, render_template, request, session
 from main import new_game, handle_action, public_state
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "roboscape-prototype-key-change-me")
+app.secret_key = os.environ.get("SECRET_KEY", "change-this-roboscape-secret")
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax"
+)
 
 
 def get_game():
@@ -22,9 +26,10 @@ def index():
 @app.get("/state")
 def state():
     game = get_game()
-    handle_action(game, {"type": "tick"})
+    result = public_state(game)
     session["game"] = game
-    return jsonify(public_state(game))
+    session.modified = True
+    return jsonify(result)
 
 
 @app.post("/action")
@@ -45,4 +50,8 @@ def restart():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    app.run(
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", 5000)),
+        debug=False
+    )
