@@ -4,159 +4,138 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RoboScape | Escape Room ML</title>
-    <link rel="stylesheet" href="/static/style.css">
-    <script src="/static/game.js" defer></script>
+    <title>RoboScape | Escape Room</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
+    <div class="background-glow"></div>
+
     <header class="topbar">
         <a class="brand" href="/">
-            <span class="brand-icon">R</span>
-            <span>ROBOSCAPE</span>
+            <span class="brand-icon">⬡</span>
+            <span>ROBO<span class="accent">SCAPE</span></span>
         </a>
-        <span class="top-tag">ESCAPE ROOM · MACHINE LEARNING</span>
+        <span class="top-label">MISSION CONTROL</span>
     </header>
 
     <main class="page">
-        <section class="hero">
-            <p class="eyebrow">MISIUNE INTERACTIVĂ</p>
-            <h1>Poți să evadezi?</h1>
-            <p class="hero-text">
-                Rezolvă șase provocări. Sistemul își adaptează
-                dificultatea în funcție de performanța ta.
-            </p>
-        </section>
-
-        <section id="player-screen" class="panel name-panel">
+        <section id="name-screen" class="name-screen panel">
             <div class="robot">🤖</div>
-            <h2>Pregătit, exploratorule?</h2>
-            <p>Introdu numele pentru a începe misiunea.</p>
+            <p class="eyebrow">SYSTEM ONLINE</p>
+            <h1>Escape the <span class="accent">unknown.</span></h1>
+            <p class="intro">
+                Rezolvă șase provocări, dezactivează bomba și evadează
+                din nava spațială. Jocul își poate adapta dificultatea
+                în funcție de evoluția ta.
+            </p>
 
             <form id="player-form">
                 <label for="player-name">Numele jucătorului</label>
                 <input
                     id="player-name"
-                    name="name"
                     type="text"
                     maxlength="30"
-                    placeholder="Scrie numele aici"
+                    placeholder="Introdu numele..."
                     autocomplete="nickname"
                     required
                 >
                 <button class="primary-button" type="submit">
                     Începe misiunea <span>→</span>
                 </button>
-                <p id="name-error" class="error-message"></p>
+                <p id="start-error" class="error-text"></p>
             </form>
+
+            <div class="stage-preview">
+                <span>01 Labirint</span>
+                <span>02 Bombă</span>
+                <span>03 Cabluri</span>
+                <span>04 Securitate</span>
+                <span>05 Logică</span>
+                <span>06 Circuit</span>
+            </div>
         </section>
 
-        <section id="game-screen" class="game-layout hidden">
-            <div class="main-column">
-                <section class="panel status-panel">
-                    <div class="status-heading">
-                        <div>
-                            <p class="eyebrow">JUCĂTOR</p>
-                            <h2 id="player-label">Explorator</h2>
-                        </div>
-                        <span id="difficulty-label" class="difficulty">
-                            Normal
-                        </span>
-                    </div>
-
-                    <div class="progress-heading">
-                        <span id="stage-label">Etapa 1 din 6</span>
-                        <span id="progress-text">0%</span>
-                    </div>
-                    <div class="progress-track">
-                        <div id="progress-fill" class="progress-fill"></div>
-                    </div>
-
-                    <div class="stats">
-                        <div class="stat">
-                            <span>Greșeli</span>
-                            <strong id="mistakes-stat">0</strong>
-                        </div>
-                        <div class="stat">
-                            <span>Indicii</span>
-                            <strong id="hints-stat">0</strong>
-                        </div>
-                        <div class="stat">
-                            <span>Reușite</span>
-                            <strong id="successes-stat">0</strong>
-                        </div>
-                    </div>
-                </section>
-
-                <section class="panel challenge-panel">
-                    <div class="challenge-heading">
-                        <div>
-                            <p class="eyebrow">PROVOCAREA CURENTĂ</p>
-                            <h2 id="challenge-title">Labirintul</h2>
-                        </div>
-                        <span id="stage-number" class="stage-number">01</span>
-                    </div>
-
-                    <p id="challenge-description" class="description"></p>
-
-                    <div id="feedback" class="feedback" role="status">
-                        Pregătește-te pentru misiune!
-                    </div>
-
-                    <div id="game-content" class="game-content"></div>
-
-                    <div class="game-actions">
-                        <button id="hint-btn" class="secondary-button" type="button">
-                            💡 Cere un indiciu
-                        </button>
-                        <button id="restart-btn" class="text-button" type="button">
-                            Schimbă jucătorul
-                        </button>
-                    </div>
-                </section>
+        <section id="game-screen" class="hidden">
+            <div class="game-heading">
+                <div>
+                    <p class="eyebrow">MISSION IN PROGRESS</p>
+                    <h1 id="stage-title">Labirintul</h1>
+                    <p id="stage-description" class="intro"></p>
+                </div>
+                <div class="player-chip">
+                    <span class="online-dot"></span>
+                    <span id="player-label">Jucător</span>
+                </div>
             </div>
 
-            <aside class="side-column">
-                <section class="panel side-panel">
-                    <p class="eyebrow">OBIECTIV</p>
-                    <h3>Evadează din navă</h3>
-                    <p class="side-description">
-                        Completează toate cele șase etape pentru a
-                        ajunge la ieșire.
-                    </p>
-                    <div class="mission-list">
-                        <div>01 <span>Labirintul</span></div>
-                        <div>02 <span>Memoria reactorului</span></div>
-                        <div>03 <span>Cablurile</span></div>
-                        <div>04 <span>Grila de securitate</span></div>
-                        <div>05 <span>Codul logic</span></div>
-                        <div>06 <span>Circuitul</span></div>
+            <div class="progress-track">
+                <div id="progress-bar" class="progress-bar"></div>
+            </div>
+            <p id="progress-label" class="progress-label">Etapa 1 din 6</p>
+
+            <div class="game-layout">
+                <section class="panel challenge-panel">
+                    <div id="game-content"></div>
+                    <div id="feedback" class="feedback" aria-live="polite"></div>
+                    <div id="hint-box" class="hint-box hidden"></div>
+
+                    <div class="action-row">
+                        <button id="hint-btn" class="secondary-button" type="button">
+                            💡 Indiciu
+                        </button>
+                        <button id="restart-btn" class="secondary-button" type="button">
+                            ↻ Reîncepe
+                        </button>
                     </div>
                 </section>
 
-                <section class="panel side-panel">
-                    <p class="eyebrow">CLASAMENT</p>
-                    <h3>Exploratori</h3>
-                    <ol id="leaderboard-list" class="leaderboard">
-                        <li>Se încarcă...</li>
-                    </ol>
-                </section>
+                <aside class="side-column">
+                    <section class="panel stats-panel">
+                        <p class="eyebrow">STATISTICI</p>
+                        <div class="stat-row">
+                            <span>Etape rezolvate</span>
+                            <strong id="success-count">0</strong>
+                        </div>
+                        <div class="stat-row">
+                            <span>Greșeli</span>
+                            <strong id="mistake-count">0</strong>
+                        </div>
+                        <div class="stat-row">
+                            <span>Indicii folosite</span>
+                            <strong id="hint-count">0</strong>
+                        </div>
+                        <div class="stat-row">
+                            <span>Dificultate</span>
+                            <strong id="difficulty-label">Normal</strong>
+                        </div>
+                    </section>
 
-                <section class="panel side-panel ml-panel">
-                    <p class="eyebrow">SISTEM INTELIGENT</p>
-                    <h3>Adaptare ML</h3>
-                    <p id="ml-status">Se verifică modelul...</p>
-                </section>
+                    <section class="panel leaderboard-panel">
+                        <div class="section-heading">
+                            <p class="eyebrow">TOP PLAYERS</p>
+                            <button id="refresh-leaderboard" class="text-button" type="button">
+                                Actualizează
+                            </button>
+                        </div>
+                        <ol id="leaderboard-list">
+                            <li>Se încarcă...</li>
+                        </ol>
+                    </section>
 
-                <a id="download-data" class="download-link" href="/download-data">
-                    ↓ Descarcă datele CSV
-                </a>
-            </aside>
+                    <section class="panel ml-panel">
+                        <p class="eyebrow">ADAPTIVE AI</p>
+                        <p id="ml-message">Se verifică modelul...</p>
+                    </section>
+                </aside>
+            </div>
         </section>
-
-        <footer>
-            <span>ROBOSCAPE</span>
-            <span>Un proiect educațional de Machine Learning</span>
-        </footer>
     </main>
+
+    <footer>
+        <span>ROBOSCAPE</span>
+        <span>Interactive machine-learning escape room</span>
+    </footer>
+
+    <script src="{{ url_for('static', filename='game.js') }}"></script>
 </body>
 </html>
