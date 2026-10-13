@@ -3,166 +3,125 @@ import csv
 import os
 from pathlib import Path
 
-from sklearn.tree import DecisionTreeClassifier
-
-
-DATA_DIR = Path(
-    os.environ.get("ROBOSCAPE_DATA_DIR", "/tmp/roboscape_data")
-)
+DATA_DIR = Path(os.environ.get("ROBOSCAPE_DATA_DIR", "/tmp/roboscape_data"))
 CSV_PATH = DATA_DIR / "game_sessions.csv"
 
-FEATURES = [
-    "mistakes",
-    "hints",
-    "stages_completed",
-    "duration_seconds",
-    "last_stage",
-]
-
-_model = None
-_model_signature = None
+DIFFICULTIES = {"easy", "normal", "hard"}
 
 
-def read_training_data():
-    if not CSV_PATH.exists():
-        return [], []
+def fallback_difficulty(mistakes, hints, successes, current_difficulty):
+    difficulty_order = ["easy", "normal", "hard"]
 
-    X = []
-    y = []
+    if mistakes >= 5 or hints >= 4:
+        return "easy"
 
-    try:
-        with CSV_PATH.open(
-            "r", newline="", encoding="utf-8-sig"
-        ) as file:
-            reader = csv.DictReader(file)
+    if successes >= 3 and mistakes <= 1 and hints <= 1:
+        if current_difficulty == "easy":
+            return "normal"
+        if current_difficulty == "normal":
+            return "hard"
 
-            for row in reader:
-                try:
-                    label = row.get("final_difficulty", "").strip()
-
-                    if label not in ("easy", "normal", "hard"):
-                        continue
-
-                    features = [
-                        float(row.get("mistakes") or 0),
-                        float(row.get("hints") or 0),
-                        float(row.get("stages_completed") or 0),
-                        float(row.get("duration_seconds") or 0),
-                        float(row.get("last_stage") or 1),
-                    ]
-
-                    X.append(features)
-                    y.append(label)
-
-                except (ValueError, TypeError):
-                    continue
-
-    except (OSError, csv.Error):
-        return [], []
-
-    return X, y
-
-
-def train_model():
-    global _model, _model_signature
-
-    X, y = read_training_data()
-
-    if len(X) < 12 or len(set(y)) < 2:
-        _model = None
-        _model_signature = None
-        return False
-
-    try:
-        model = DecisionTreeClassifier(
-            max_depth=4,
-            min_samples_leaf=2,
-            random_state=42,
-        )
-        model.fit(X, y)
-
-        _model = model
-        _model_signature = len(X)
-
-        return True
-
-    except Exception:
-        _model = None
-        _model_signature = None
-        return False
+    return current_difficulty if current_difficulty in DIFFICULTIES else "normal"
 
 
 def predict_difficulty(
     mistakes,
     hints,
     successes,
-    stage=1,
-    elapsed_seconds=0,
+    stage,
+    elapsed_seconds,
     current_difficulty="normal",
 ):
-    global _model, _model_signature
+    fallback = fallback_difficulty(
+        mistakes, hints, successes, current_difficulty
+    )
 
-    X, y = read_training_data()
+    try:
+        from sklearn.tree import DecisionTreeClassifier
 
-    if len(X) >= 12 and len(set(y)) >= 2:
-        if _model is None or _model_signature != len(X):
-            train_model()
+        if not CSV_PATH.exists():
+            return fallback
 
-    if _model is not None:
-        try:
-            features = [[
-                float(mistakes),
-                float(hints),
-                float(successes),
-                float(elapsed_seconds),
-                float(stage),
-            ]]
+        rows = []
 
-            prediction = _model.predict(features)[0]
+        with CSV_PATH.open("r", newline="", encoding="utf-8-sig") as file:
+            for row in csv.DictReader(file):
+                label = row.get("final_difficulty", "")
 
-            if prediction in ("easy", "normal", "hard"):
-                return prediction
+                if label not in DIFFICULTIES:
+                    continue
 
-        except Exception:
-            pass
+                try:
+                    rows.append((
+                        [
+                            int(row.get("mistakes") or 0),
+                            int(row.get("hints") or 0),
+                            int(row.get("stages_completed") or 0),
+                            int(row.get("last_stage") or 1),
+                            int(row.get("duration_seconds") or 0),
+                        ],
+                        label,
+                    ))
+                except ValueError:
+                    continue
 
-    # Regulă de rezervă: funcționează și fără date de antrenare.
-    pressure = int(mistakes) + int(hints)
+        if len(rows) < 12 or len({label for _, label in rows}) < 2:
+            return fallback
 
-    if pressure >= 5:
-        return "easy"
+        X = [features for features, _ in rows]
+        y = [label for _, label in rows]
 
-    if pressure <= 1 and int(stage) >= 4:
-        return "hard"
+        model = DecisionTreeClassifier(
+            max_depth=3,
+            min_samples_leaf=2,
+            random_state=42,
+        )
+        model.fit(X, y)
 
-    if current_difficulty in ("easy", "normal", "hard"):
-        return current_difficulty
+        features = [[
+            int(mistakes),
+            int(hints),
+            int(successes),
+            int(stage),
+            int(elapsed_seconds),
+        ]]
 
-    return "normal"
+        prediction = model.predict(features)[0]
+
+        if prediction in DIFFICULTIES:
+            return prediction
+
+    except (ImportError, ValueError, OSError):
+        pass
+
+    return fallback
 
 
 def model_status():
-    X, y = read_training_data()
+    try:
+        if not CSV_PATH.exists():
+            return {
+                "message": "Modelul adaptiv este pregătit. Nu există încă date istorice."
+            }
 
-    if len(X) >= 12 and len(set(y)) >= 2:
-        if _model is None or _model_signature != len(X):
-            train_model()
+        with CSV_PATH.open("r", newline="", encoding="utf-8-sig") as file:
+            rows = list(csv.DictReader(file))
 
-    if _model is not None:
+        if len(rows) < 12:
+            return {
+                "message": (
+                    f"Modelul adaptiv este activ. "
+                    f"Există {len(rows)} sesiuni; sunt necesare mai multe "
+                    f"date pentru antrenarea arborelui de decizie."
+                )
+            }
+
         return {
-            "trained": True,
             "message": (
-                "Model ML antrenat pe "
-                + str(len(X))
-                + " sesiuni înregistrate."
-            ),
+                f"Au fost înregistrate {len(rows)} sesiuni. "
+                "Modelul poate folosi istoricul pentru a adapta dificultatea."
+            )
         }
 
-    return {
-        "trained": False,
-        "message": (
-            "Mod adaptiv activ. Pentru antrenarea modelului ML "
-            "sunt necesare cel puțin 12 sesiuni valide și "
-            "minimum două niveluri de dificultate în date."
-        ),
-    }
+    except OSError:
+        return {"message": "Modelul adaptiv folosește momentan regulile de rezervă."}
