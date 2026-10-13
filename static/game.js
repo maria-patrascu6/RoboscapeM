@@ -260,9 +260,28 @@
       el(
         "p",
         "",
-        "Memorează simbolurile afișate, apoi selectează-le în aceeași ordine."
+        "Memorează simbolurile afișate pe bombă, apoi introdu-le în aceeași ordine."
       )
     );
+
+    const illustration = el("div", "bomb-illustration");
+    illustration.appendChild(el("div", "bomb-fuse"));
+    illustration.appendChild(el("div", "bomb-wire bomb-wire-red"));
+    illustration.appendChild(el("div", "bomb-wire bomb-wire-blue"));
+
+    const shell = el("div", "bomb-shell");
+    shell.appendChild(el("span", "bomb-light"));
+    shell.appendChild(el("span", "bomb-label", "ROBO BOMB"));
+    shell.appendChild(
+      el(
+        "span",
+        "bomb-display-small",
+        state.bomb_phase === "show" ? "MEM" : "ARM"
+      )
+    );
+
+    illustration.appendChild(shell);
+    left.appendChild(illustration);
 
     const display = el("div", "bomb-display");
 
@@ -276,13 +295,11 @@
       }
     } else {
       display.textContent =
-        (state.bomb_input || []).join(" ") || "? ? ?";
+        (state.bomb_input || []).join("  ") || "?  ?  ?";
     }
 
     left.appendChild(display);
-
-    const timer = el("p", "timer", "");
-    left.appendChild(timer);
+    left.appendChild(el("p", "timer", ""));
 
     const right = el("div", "stage-instructions");
 
@@ -291,8 +308,8 @@
         "p",
         "",
         state.bomb_phase === "show"
-          ? "Secvența este vizibilă pentru câteva secunde."
-          : "Selectează simbolurile înainte să expire timpul."
+          ? "Memorează secvența înainte să dispară."
+          : "Apasă simbolurile în ordinea memorată înainte să expire timpul."
       )
     );
 
@@ -329,7 +346,6 @@
 
     wrap.append(left, right);
     area().replaceChildren(wrap);
-
     updateBombTimer(state);
   }
 
@@ -340,19 +356,13 @@
       el(
         "p",
         "stage-instructions",
-        "Alege culorile în ordinea corectă. O alegere greșită resetează secvența."
+        "Descurcă toate cablurile: trage capetele colorate din dreapta în sus sau în jos până când liniile nu se mai intersectează."
       )
     );
 
-    const progress = el(
-      "p",
-      "memory-progress",
-      `Progres: ${(state.wire_input || []).length} / ${(state.wire_target || []).length}`
-    );
-
-    panel.appendChild(progress);
-
-    const colors = state.colors || [];
+    const colors = state.colors || [
+      "Albastru", "Galben", "Mov", "Verde"
+    ];
 
     const palette = {
       "Albastru": "#4ea5ff",
@@ -362,50 +372,230 @@
       "Roșu": "#ff6f83"
     };
 
-    const target = el("div", "wire-target");
+    const count = colors.length;
+    const order = (
+      state.wire_target ||
+      Array.from({ length: count }, (_, i) => i)
+    ).slice();
 
-    target.appendChild(el("p", "", "Ordinea de conectare:"));
+    const svgNS = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(svgNS, "svg");
 
-    (state.wire_target || []).forEach(
-      (colorIndex, position) => {
-        const label = el(
-          "span",
-          "wire-target-chip",
-          `${position + 1}. ${colors[colorIndex] || "?"}`
-        );
-
-        label.style.borderColor =
-          palette[colors[colorIndex]] || "#58e0e6";
-
-        target.appendChild(label);
-      }
+    svg.setAttribute("viewBox", "0 0 360 250");
+    svg.setAttribute("role", "img");
+    svg.setAttribute(
+      "aria-label",
+      "Cabluri colorate care pot fi descurcate prin tragerea capetelor din dreapta"
     );
+    svg.classList.add("tangled-cables");
 
-    panel.appendChild(target);
+    const top = 28;
+    const step = count > 1 ? 194 / (count - 1) : 0;
+    const yFor = (slot) => top + slot * step;
 
-    const buttons = el("div", "wire-buttons");
+    let drag = null;
 
-    colors.forEach((name, index) => {
-      const b = button(
-        name,
-        "wire-button",
-        () => sendAction({
-          type: "wire_pick",
-          color: index
+    function svgElement(tag, attrs = {}) {
+      const node = document.createElementNS(svgNS, tag);
+
+      Object.entries(attrs).forEach(([key, value]) => {
+        node.setAttribute(key, String(value));
+      });
+
+      return node;
+    }
+
+    function drawCables() {
+      svg.replaceChildren();
+
+      svg.appendChild(
+        svgElement("rect", {
+          x: 8,
+          y: 8,
+          width: 344,
+          height: 234,
+          rx: 12,
+          fill: "#080f1d",
+          stroke: "#2a3954"
         })
       );
 
-      b.style.borderLeft =
-        `5px solid ${palette[name] || "#58e0e6"}`;
+      svg.appendChild(
+        svgElement("text", {
+          x: 43,
+          y: 20,
+          fill: "#9caec8",
+          "font-size": 9,
+          "text-anchor": "middle"
+        })
+      );
 
-      if ((state.wire_input || []).includes(index)) {
-        b.classList.add("done");
-      }
+      svg.appendChild(
+        svgElement("text", {
+          x: 317,
+          y: 20,
+          fill: "#9caec8",
+          "font-size": 9,
+          "text-anchor": "middle"
+        })
+      );
 
-      buttons.appendChild(b);
+      colors.forEach((name, id) => {
+        const startY = yFor(id);
+        const endSlot = order.indexOf(id);
+        const endY = (
+          drag && drag.id === id
+            ? drag.y
+            : yFor(endSlot)
+        );
+
+        const color = palette[name] || "#58e0e6";
+
+        svg.appendChild(
+          svgElement("path", {
+            d: `M 43 ${startY} C 125 ${startY}, 235 ${endY}, 317 ${endY}`,
+            fill: "none",
+            stroke: color,
+            "stroke-width": 5,
+            "stroke-linecap": "round",
+            opacity: drag && drag.id !== id ? 0.72 : 1
+          })
+        );
+      });
+
+      colors.forEach((name, id) => {
+        const startY = yFor(id);
+        const endSlot = order.indexOf(id);
+        const endY = (
+          drag && drag.id === id
+            ? drag.y
+            : yFor(endSlot)
+        );
+
+        const color = palette[name] || "#58e0e6";
+
+        svg.appendChild(
+          svgElement("circle", {
+            cx: 43,
+            cy: startY,
+            r: 8,
+            fill: color,
+            stroke: "#edf4ff",
+            "stroke-width": 1.5
+          })
+        );
+
+        const endpoint = svgElement("circle", {
+          cx: 317,
+          cy: endY,
+          r: 11,
+          fill: color,
+          stroke: "#ffffff",
+          "stroke-width": 2,
+          "data-wire-id": id,
+          class: "wire-endpoint"
+        });
+
+        endpoint.style.cursor = "grab";
+        svg.appendChild(endpoint);
+
+        const label = svgElement("text", {
+          x: 60,
+          y: startY + 4,
+          fill: color,
+          "font-size": 10,
+          "font-weight": 700
+        });
+
+        label.textContent = name;
+        svg.appendChild(label);
+      });
+    }
+
+    function localY(event) {
+      const rect = svg.getBoundingClientRect();
+
+      return Math.max(
+        top,
+        Math.min(
+          top + step * (count - 1),
+          (event.clientY - rect.top) * 250 / rect.height
+        )
+      );
+    }
+
+    svg.addEventListener("pointerdown", (event) => {
+      const target = event.target.closest("[data-wire-id]");
+
+      if (!target) return;
+
+      event.preventDefault();
+
+      drag = {
+        id: Number(target.getAttribute("data-wire-id")),
+        y: localY(event)
+      };
+
+      svg.setPointerCapture(event.pointerId);
+      drawCables();
     });
 
-    panel.appendChild(buttons);
+    svg.addEventListener("pointermove", (event) => {
+      if (!drag) return;
+
+      drag.y = localY(event);
+      drawCables();
+    });
+
+    svg.addEventListener("pointerup", (event) => {
+      if (!drag) return;
+
+      const id = drag.id;
+      const oldSlot = order.indexOf(id);
+
+      const newSlot = Math.max(
+        0,
+        Math.min(
+          count - 1,
+          Math.round((localY(event) - top) / (step || 1))
+        )
+      );
+
+      if (oldSlot !== newSlot) {
+        const otherId = order[newSlot];
+        order[newSlot] = id;
+        order[oldSlot] = otherId;
+      }
+
+      drag = null;
+      drawCables();
+
+      if (order.every((wireId, slot) => wireId === slot)) {
+        panel.appendChild(
+          el("p", "wire-success", "✓ Cabluri descurcate!")
+        );
+
+        sendAction({ type: "wire_solved" });
+      }
+    });
+
+    svg.addEventListener("pointercancel", () => {
+      drag = null;
+      drawCables();
+    });
+
+    drawCables();
+
+    panel.appendChild(svg);
+
+    panel.appendChild(
+      el(
+        "p",
+        "memory-progress",
+        "Trage capetele rotunde din partea dreaptă. Cablurile nu trebuie să se intersecteze."
+      )
+    );
+
     area().replaceChildren(panel);
   }
 
@@ -429,8 +619,8 @@
     );
 
     const form = el("form", "answer-form");
-
     const input = el("input", "", "");
+
     input.type = "number";
     input.inputMode = "numeric";
     input.placeholder = "Răspuns numeric";
@@ -464,11 +654,9 @@
   }
 
   function pipeSymbol(tile) {
-    if (tile.kind === "straight") {
-      return tile.rotation % 2 === 0 ? "│" : "─";
-    }
-
-    return ["└", "┌", "┐", "┘"][tile.rotation % 4];
+    return tile.kind === "straight"
+      ? (tile.rotation % 2 === 0 ? "│" : "─")
+      : ["└", "┌", "┐", "┘"][tile.rotation % 4];
   }
 
   function renderCircuit(state) {
@@ -478,9 +666,16 @@
       el(
         "p",
         "stage-instructions",
-        "Rotește piesele până când energia ajunge de la sursa din stânga-sus la ieșirea din dreapta-jos."
+        "Rotește piesele de conductă până când creezi un traseu continuu între sursa de energie din stânga și ieșirea din dreapta-jos."
       )
     );
+
+    const legend = el("div", "circuit-legend");
+
+    legend.appendChild(el("span", "source-label", "⚡ SURSA"));
+    legend.appendChild(el("span", "exit-label", "◎ IEȘIRE"));
+
+    wrap.appendChild(legend);
 
     const grid = el("div", "circuit-grid");
 
@@ -498,12 +693,15 @@
       if (index === 0) b.classList.add("source");
       if (index === 15) b.classList.add("exit");
 
-      b.title =
-        index === 0
-          ? "Sursă"
-          : index === 15
-            ? "Ieșire"
-            : `Piesa ${index + 1}`;
+      if ([0, 1, 2, 6, 10, 11, 15].includes(index)) {
+        b.classList.add("route-candidate");
+      }
+
+      b.title = index === 0
+        ? "Sursă: conectează conducta spre dreapta"
+        : index === 15
+          ? "Ieșire: conectează conducta dinspre sus spre dreapta"
+          : `Rotește piesa ${index + 1}`;
 
       grid.appendChild(b);
     });
@@ -514,7 +712,7 @@
       el(
         "p",
         "circuit-caption",
-        "Verde = sursă · Mov = ieșire · Apasă o piesă pentru a o roti."
+        "Apasă pe orice piesă pentru a o roti cu 90°. Conductele trebuie să formeze o cale neîntreruptă."
       )
     );
 
@@ -584,11 +782,8 @@
         ? `ETAPA ${String(state.stage).padStart(2, "0")}`
         : "MISIUNE FINALIZATĂ";
 
-    $("stage-name").textContent =
-      state.stage_name || "RoboScape";
-
-    $("feedback").textContent =
-      state.feedback || "Continuă misiunea.";
+    $("stage-name").textContent = state.stage_name || "RoboScape";
+    $("feedback").textContent = state.feedback || "Continuă misiunea.";
 
     if (state.status === "won" || Number(state.stage) > 6) {
       return renderVictory(state);
@@ -598,27 +793,21 @@
       case 1:
         renderMaze(state, false);
         break;
-
       case 2:
         renderBomb(state);
         break;
-
       case 3:
         renderWires(state);
         break;
-
       case 4:
         renderMaze(state, true);
         break;
-
       case 5:
         renderLogic(state);
         break;
-
       case 6:
         renderCircuit(state);
         break;
-
       default:
         area().replaceChildren(
           el("p", "loading-error", "Etapa jocului nu este recunoscută.")
@@ -664,9 +853,7 @@
   }
 
   function startPolling() {
-    if (pollTimer) {
-      clearInterval(pollTimer);
-    }
+    if (pollTimer) clearInterval(pollTimer);
 
     pollTimer = setInterval(() => {
       if (
